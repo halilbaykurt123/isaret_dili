@@ -115,9 +115,10 @@ function anaSayfa() {
       <div><b>${toplamPuan == null ? "–" : toplamPuan}</b><small>quiz puanı</small></div>
     </div>
     ${ogrenilenSayi ? `<p style="margin-top:12px">🎉 Şimdiye kadar <b>${ogrenilenSayi}</b> işaret öğrendin. Harika gidiyorsun!</p>` : ""}
-    <button class="btn" ${sinavAcik() ? "" : "disabled"} onclick="location.hash='#/sinav'">
-      ${durum.phase === "in_progress" ? `▶ ${durum.week}. hafta quiz'i başladı, katıl` : sinavAcik() ? `▶ ${durum.week}. hafta quiz'ine katıl` : "🔒 Quiz ders saatinde açılır"}
+    <button class="btn" ${sinavAcik() ? "" : "disabled"} onclick="location.hash='#/hafta/${durum.week}'">
+      ${sinavAcik() ? `▶ ${durum.week}. hafta quiz'i açık, haftaya git` : "🔒 Quiz ders saatinde açılır"}
     </button>
+    <p class="soluk" style="margin:8px 0 0;font-size:14px;text-align:center">Quiz'e her haftanın kendi sayfasından katılırsın.</p>
     ${fbHata ? `<div class="uyari">Bağlantı sorunu: ${kacis(fbHata)}</div>` : ""}
   </section>`;
 }
@@ -143,6 +144,17 @@ function haftaSayfasi(n) {
       <div class="izgara">${g.kelimeler.map(([ad, v]) =>
         `<button class="isaret ${ogrenildiMi(v) ? "ogrenildi" : ""}" data-v="${v}">${kacis(ad)}</button>`).join("")}</div>`).join("")}
     ${p.ok === p.top ? `<div class="soru" style="margin-top:16px">🎉 Tebrikler! Bu haftanın bütün işaretlerini öğrendin.</div>` : ""}
+  </section>
+  <section class="kart">
+    <div class="etiket e-s"><i></i>${n}. Hafta Quiz</div>
+    <h3>Kendini dene</h3>
+    <p class="soluk">Quiz ders sonunda, araştırmacı açtığında başlar. Her soru için 15 saniyen var; ne kadar hızlı cevaplarsan o kadar çok puan alırsın.</p>
+    ${(() => {
+      const acik = sinavAcik() && Number(durum.week) === n;
+      return `<button class="btn" ${acik ? "" : "disabled"} onclick="location.hash='#/sinav'">
+        ${acik ? (durum.phase === "in_progress" ? "▶ Quiz başladı, hemen katıl" : "▶ Quiz'e katıl (bekleme odası)") : "🔒 Bu haftanın quiz'i ders saatinde açılır"}
+      </button>`;
+    })()}
   </section>`;
   const liste = haftaKelimeleri(u);
   kok.querySelectorAll(".isaret").forEach(b => b.onclick = () => oynatici(liste, liste.findIndex(k => k[1] === b.dataset.v), () => haftaSayfasi(n)));
