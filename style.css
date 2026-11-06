@@ -81,3 +81,8 @@ input[type=text],input[type=email],input[type=password]{width:100%;font:inherit;
 table{width:100%;border-collapse:collapse;font-size:15px}
 td,th{padding:10px 6px;border-bottom:1px solid var(--cizgi);text-align:left}
 th{color:var(--soluk);font-size:12px;text-transform:uppercase}
+.mik{width:112px;height:112px;border-radius:50%;margin:14px auto 6px;display:flex;align-items:center;justify-content:center;font-size:46px;border:0;background:var(--mor);color:#fff;box-shadow:0 6px 18px rgba(107,63,212,.35)}
+.mik.dinliyor{background:var(--kirmizi);animation:nabiz 1.2s infinite}
+@keyframes nabiz{0%{box-shadow:0 0 0 0 rgba(214,69,69,.55)}100%{box-shadow:0 0 0 22px rgba(214,69,69,0)}}
+.cipler{display:flex;flex-wrap:wrap;gap:8px}
+.cip{border:1px solid var(--cizgi);background:var(--bg);color:var(--yazi);border-radius:99px;padding:7px 12px;font-size:14px}

@@ -51,10 +51,11 @@ const aktifHafta = () => Number(durum.week) || yerel.oku("sonHafta", 1);
 function rota() {
   const h = location.hash.replace(/^#\/?/, "");
   if (h.startsWith("hafta/")) return { ad: "hafta", n: Number(h.split("/")[1]) };
+  if (h.startsWith("etkinlik/")) return { ad: "etkinlik", n: Number(h.split("/")[1]) };
   if (h === "sinav") return { ad: "sinav" };
   return { ad: "ana" };
 }
-window.addEventListener("hashchange", () => { if (sinavCalisiyor && rota().ad !== "sinav") sinaviBirak(); ciz(); window.scrollTo(0, 0); });
+window.addEventListener("hashchange", () => { dinlemeyiDurdur(); if (sinavCalisiyor && rota().ad !== "sinav") sinaviBirak(); ciz(); window.scrollTo(0, 0); });
 
 function ust(geri) {
   return `<div class="ust">${geri ? `<button class="geri" onclick="location.hash='#/'">‹ Ana sayfa</button>` :
@@ -65,6 +66,7 @@ function ciz() {
   const r = rota();
   if (r.ad === "hafta") return haftaSayfasi(r.n);
   if (r.ad === "sinav") return sinavSayfasi();
+  if (r.ad === "etkinlik") return etkinlikSayfasi(r.n);
   anaSayfa();
 }
 
@@ -146,6 +148,12 @@ function haftaSayfasi(n) {
     ${p.ok === p.top ? `<div class="soru" style="margin-top:16px">🎉 Tebrikler! Bu haftanın bütün işaretlerini öğrendin.</div>` : ""}
   </section>
   <section class="kart">
+    <div class="etiket e-a"><i></i>Etkinlik</div>
+    <h3>Söyle, işaretini gör</h3>
+    <p class="soluk">Bu haftanın kelimelerinden birini sesli söyle; uygulama işaretini göstersin. Sonra sen de işareti kendi ellerinle yap.</p>
+    <button class="btn" onclick="location.hash='#/etkinlik/${n}'">🎤 Etkinliğe git</button>
+  </section>
+  <section class="kart">
     <div class="etiket e-s"><i></i>${n}. Hafta Quiz</div>
     <h3>Kendini dene</h3>
     <p class="soluk">Quiz ders sonunda, araştırmacı açtığında başlar. Her soru için 15 saniyen var; ne kadar hızlı cevaplarsan o kadar çok puan alırsın.</p>
@@ -190,6 +198,89 @@ function oynatici(liste, i, kapaninca) {
     perde.querySelector("#kpt").onclick = kapat;
   }
   goster();
+}
+
+// ---------- ETKİNLİK: sesli işaret arama (orijinal Android ekranı) ----------
+const normal = s => String(s || "").toLocaleLowerCase("tr-TR").replace(/[?!.,;:¿¡'"’]/g, "").replace(/\s+/g, " ").trim();
+const SOZLUK = (() => {
+  const h = new Map();
+  // Önce haftalık kelimeler (ünitelerle ve quiz'le aynı video), sonra orijinal sesli arama listesi
+  for (const u of UNITES) for (const g of u.gruplar) for (const [ad, v] of g.kelimeler)
+    for (const parca of ad.split("/")) { const n = normal(parca); if (n && !h.has(n)) h.set(n, v); }
+  for (const [k, v] of Object.entries(window.SESLI || {})) { const n = normal(k); if (n && !h.has(n)) h.set(n, v); }
+  return h;
+})();
+const SOZLUK_UZUN = [...SOZLUK.keys()].filter(k => k.length >= 2).sort((a, b) => b.length - a.length);
+function eslestir(metin) {
+  const t = normal(metin);
+  if (!t) return null;
+  if (SOZLUK.has(t)) return SOZLUK.get(t);
+  const ara = " " + t + " ";
+  const k = SOZLUK_UZUN.find(k => ara.includes(" " + k + " "));
+  return k ? SOZLUK.get(k) : null;
+}
+const videoAdi = (() => { const m = {}; for (const u of UNITES) for (const g of u.gruplar) for (const [ad, v] of g.kelimeler) m[v] ??= ad; return m; })();
+
+let aktifTanima = null;
+function dinlemeyiDurdur() { if (aktifTanima) { try { aktifTanima.abort(); } catch {} aktifTanima = null; } }
+
+function etkinlikSayfasi(n) {
+  const u = UNITES.find(x => x.hafta === n);
+  if (!u) { location.hash = "#/"; return; }
+  const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
+  kok.innerHTML = `<div class="ust"><button class="geri" onclick="location.hash='#/hafta/${n}'">‹ ${n}. Hafta</button></div>
+  <section class="kart" style="text-align:center">
+    <div class="etiket e-a"><i></i>Etkinlik · ${n}. Hafta</div>
+    <h2>Söyle, işaretini gör</h2>
+    <button class="mik" id="mik" aria-label="Konuşmak için dokun">🎤</button>
+    <p class="soluk" id="durum">${SR ? "Engelleri kaldırmak için lütfen konuşun" : "Bu tarayıcı sesli girişi desteklemiyor; kelimeyi aşağıya yazabilirsin."}</p>
+    <div class="soru" id="sonuc">Kelime: —</div>
+    <video id="vid" muted loop playsinline style="display:none;width:100%;border-radius:12px;background:#000;max-height:45vh;margin-top:12px"></video>
+    <div class="satir" style="margin-top:4px">
+      <input type="text" id="yaz" placeholder="ya da kelimeyi yaz" autocomplete="off" style="flex:1">
+      <button class="btn ikincil" id="goster" style="width:auto;padding:0 18px">Göster</button>
+    </div>
+  </section>
+  <section class="kart">
+    <h3>Bu haftanın kelimeleri</h3>
+    <p class="soluk">Bunlardan birini söylemeyi dene. Önceki haftaların kelimeleri de çalışır.</p>
+    <div class="cipler">${u.gruplar.flatMap(g => g.kelimeler).map(([ad, v]) => `<button class="cip" data-v="${v}" data-ad="${kacis(ad)}">${kacis(ad)}</button>`).join("")}</div>
+  </section>`;
+
+  const durumYaz = m => { $("#durum").textContent = m; };
+  const vid = $("#vid");
+  const goster = (soylenen, v) => {
+    $("#sonuc").textContent = "Kelime: " + soylenen;
+    if (!v) { vid.style.display = "none"; vid.removeAttribute("src"); durumYaz("Bu kelimenin işareti bulunamadı, başka bir kelime dene."); return; }
+    vid.src = `videos/${v}.mp4`; vid.style.display = "block"; vid.playbackRate = yerel.oku("hiz", 1);
+    vid.play().catch(() => {});
+    durumYaz("Şimdi sen de işareti kendi ellerinle yap.");
+  };
+  const metindenGoster = metinler => {
+    for (const m of metinler) { const v = eslestir(m); if (v) return goster(m.trim(), v); }
+    goster((metinler[0] || "").trim(), null);
+  };
+
+  $("#goster").onclick = () => { const t = $("#yaz").value; if (t.trim()) metindenGoster([t]); };
+  $("#yaz").onkeydown = e => { if (e.key === "Enter") $("#goster").click(); };
+  kok.querySelectorAll(".cip").forEach(b => b.onclick = () => goster(b.dataset.ad, b.dataset.v));
+
+  const mik = $("#mik");
+  mik.onclick = () => {
+    if (!SR) { durumYaz("Bu tarayıcı sesli girişi desteklemiyor; kelimeyi aşağıya yazabilirsin."); $("#yaz").focus(); return; }
+    if (aktifTanima) { aktifTanima.stop(); return; }
+    const t = new SR();
+    t.lang = "tr-TR"; t.interimResults = false; t.maxAlternatives = 5;
+    t.onstart = () => { mik.classList.add("dinliyor"); durumYaz("Dinliyorum…"); };
+    t.onresult = e => metindenGoster([...e.results[0]].map(a => a.transcript));
+    t.onerror = e => durumYaz(
+      e.error === "not-allowed" || e.error === "service-not-allowed" ? "Mikrofon izni verilmedi. Tarayıcı ayarlarından izin verip tekrar dene." :
+      e.error === "no-speech" ? "Ses algılanamadı, tekrar dene." :
+      e.error === "aborted" ? "" : "Ses tanınamadı (" + e.error + "), kelimeyi yazabilirsin.");
+    t.onend = () => { if (aktifTanima === t) aktifTanima = null; mik.classList.remove("dinliyor"); };
+    aktifTanima = t;
+    try { t.start(); } catch (err) { aktifTanima = null; durumYaz("Mikrofon başlatılamadı: " + err.message); }
+  };
 }
 
 // ---------- SINAV (bekleme odası + quiz) ----------
