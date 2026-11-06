@@ -207,11 +207,28 @@ const SOZLUK = (() => {
   // Önce haftalık kelimeler (ünitelerle ve quiz'le aynı video), sonra orijinal sesli arama listesi
   for (const u of UNITES) for (const g of u.gruplar) for (const [ad, v] of g.kelimeler)
     for (const parca of ad.split("/")) { const n = normal(parca); if (n && !h.has(n)) h.set(n, v); }
+  for (const [k, v] of Object.entries(window.SESLI_EK || {})) { const n = normal(k); if (n && !h.has(n)) h.set(n, v); }
   for (const [k, v] of Object.entries(window.SESLI || {})) { const n = normal(k); if (n && !h.has(n)) h.set(n, v); }
   return h;
 })();
 const SOZLUK_UZUN = [...SOZLUK.keys()].filter(k => k.length >= 2).sort((a, b) => b.length - a.length);
-function eslestir(metin) {
+// Yakın eşleşme yalnızca haftalık Türkçe kelimelerde yapılır (yanlış tanınan sesleri düzeltmek için)
+const BULANIK_ADAY = (() => {
+  const m = new Map();
+  for (const u of UNITES) for (const g of u.gruplar) for (const [ad, v] of g.kelimeler)
+    for (const parca of ad.split("/")) { const n = normal(parca); if (n.length >= 2 && !m.has(n)) m.set(n, v); }
+  for (const [k, v] of Object.entries(window.SESLI_EK || {})) { const n = normal(k); if (n.length >= 3 && !m.has(n)) m.set(n, v); }
+  return [...m.entries()];
+})();
+function mesafe(a, b) {
+  const d = Array.from({ length: b.length + 1 }, (_, j) => j);
+  for (let i = 1; i <= a.length; i++) {
+    let onceki = d[0]; d[0] = i;
+    for (let j = 1; j <= b.length; j++) { const t = d[j]; d[j] = Math.min(d[j] + 1, d[j - 1] + 1, onceki + (a[i - 1] === b[j - 1] ? 0 : 1)); onceki = t; }
+  }
+  return d[b.length];
+}
+function eslestirKesin(metin) {
   const t = normal(metin);
   if (!t) return null;
   if (SOZLUK.has(t)) return SOZLUK.get(t);
@@ -219,21 +236,112 @@ function eslestir(metin) {
   const k = SOZLUK_UZUN.find(k => ara.includes(" " + k + " "));
   return k ? SOZLUK.get(k) : null;
 }
-const videoAdi = (() => { const m = {}; for (const u of UNITES) for (const g of u.gruplar) for (const [ad, v] of g.kelimeler) m[v] ??= ad; return m; })();
+function eslestir(metin) {
+  const kesin = eslestirKesin(metin);
+  if (kesin) return kesin;
+  const t = normal(metin);
+  if (!t) return null;
+  // Yakın eşleşme: söylenen metnin her parçasını haftalık kelimelerle karşılaştır
+  const kelimeler = t.split(" ");
+  let en = null, enSkor = 0;
+  for (const [aday, v] of BULANIK_ADAY) {
+    const n = aday.split(" ").length;
+    for (let i = 0; i + n <= Math.max(kelimeler.length, n); i++) {
+      const parca = kelimeler.slice(i, i + n).join(" ");
+      if (!parca) continue;
+      const skor = 1 - mesafe(parca, aday) / Math.max(parca.length, aday.length);
+      if (skor > enSkor) { enSkor = skor; en = v; }
+    }
+  }
+  return enSkor >= 0.72 ? en : null;
+}
 
-let aktifTanima = null, mikIzni = false;
-function dinlemeyiDurdur() { if (aktifTanima) { try { aktifTanima.abort(); } catch {} aktifTanima = null; } }
+// --- Ses motorları ---
+// "tarayici": tarayıcının yerleşik tanıması (Android Chrome, iPhone Safari).
+// "yerel": telefonda çalışan Whisper modeli; ses cihazdan çıkmaz, her tarayıcıda çalışır.
+const SR_SINIF = window.SpeechRecognition || window.webkitSpeechRecognition;
+const IOS_BASKA_TARAYICI = /CriOS|FxiOS|EdgiOS|OPiOS|GSA\//.test(navigator.userAgent);
+const motorSec = () => yerel.oku("sesMotoru", "") || (SR_SINIF && !IOS_BASKA_TARAYICI ? "tarayici" : "yerel");
+
+const WHISPER_KUTUPHANE = "https://cdn.jsdelivr.net/npm/@huggingface/transformers@3.0.2/dist/transformers.min.js";
+let whisperSoz = null, modelDinleyici = null, modelDurumu = "yok";   // yok | iniyor | hazir | hata
+const indirilen = {};
+function whisperYukle() {
+  if (!whisperSoz) {
+    modelDurumu = "iniyor"; modelDinleyici?.();
+    whisperSoz = (async () => {
+      const tf = await import(WHISPER_KUTUPHANE);
+      tf.env.allowLocalModels = false;
+      const asr = await tf.pipeline("automatic-speech-recognition", "Xenova/whisper-tiny", {
+        device: "wasm", dtype: "q8",
+        progress_callback: p => {
+          if (p.status === "progress" && p.total) { indirilen[p.file] = [p.loaded, p.total]; modelDinleyici?.(); }
+        }
+      });
+      modelDurumu = "hazir"; modelDinleyici?.();
+      return asr;
+    })().catch(e => { whisperSoz = null; modelDurumu = "hata"; modelDinleyici?.(e); throw e; });
+  }
+  return whisperSoz;
+}
+function modelYuzdesi() {
+  const v = Object.values(indirilen); if (!v.length) return 0;
+  return Math.round(v.reduce((a, x) => a + x[0], 0) / v.reduce((a, x) => a + x[1], 0) * 100);
+}
+
+function mikHatasi(err) {
+  return err.name === "NotFoundError" ? "Bu cihazda mikrofon bulunamadı. Kelimeyi aşağıya yazabilirsin." :
+    err.name === "NotAllowedError" ? "Mikrofon izni verilmedi. Adres çubuğundaki simgeden Mikrofon'a izin ver ve sayfayı yenile. iPhone'da: Ayarlar > (tarayıcın) > Mikrofon." :
+    err.name === "NotReadableError" ? "Mikrofon açılamadı: başka bir uygulama kullanıyor olabilir." :
+    "Mikrofon açılamadı (" + (err.name || err.message) + ").";
+}
+
+// Mikrofondan ham ses kaydı, 16 kHz mono (Whisper'ın beklediği biçim)
+async function sesKaydet(ctx, enUzunMs, kontrol) {
+  const akis = await navigator.mediaDevices.getUserMedia({ audio: { channelCount: 1, echoCancellation: true, noiseSuppression: true } });
+  try {
+    await ctx.resume();
+    const kaynak = ctx.createMediaStreamSource(akis);
+    const islem = ctx.createScriptProcessor(4096, 1, 1);
+    const parcalar = [];
+    islem.onaudioprocess = e => parcalar.push(new Float32Array(e.inputBuffer.getChannelData(0)));
+    kaynak.connect(islem); islem.connect(ctx.destination);
+    kontrol.basladi?.();
+    await new Promise(r => { const z = setTimeout(r, enUzunMs); kontrol.bitir = () => { clearTimeout(z); r(); }; });
+    islem.disconnect(); kaynak.disconnect();
+    const uzunluk = parcalar.reduce((a, x) => a + x.length, 0), tum = new Float32Array(uzunluk);
+    let o = 0; for (const x of parcalar) { tum.set(x, o); o += x.length; }
+    // 16 kHz'e indir (pencere ortalaması)
+    const oran = ctx.sampleRate / 16000;
+    if (oran <= 1) return tum;
+    const n = Math.floor(tum.length / oran), cikti = new Float32Array(n);
+    for (let i = 0; i < n; i++) {
+      const a = Math.floor(i * oran), b = Math.min(Math.floor((i + 1) * oran), tum.length);
+      let t = 0; for (let j = a; j < b; j++) t += tum[j]; cikti[i] = t / Math.max(b - a, 1);
+    }
+    return cikti;
+  } finally { akis.getTracks().forEach(t => t.stop()); }
+}
+const sessizMi = x => { let m = 0; for (let i = 0; i < x.length; i++) { const a = Math.abs(x[i]); if (a > m) m = a; } return m < 0.015 || x.length < 4000; };
+
+let aktifTanima = null, aktifKayit = null;
+function dinlemeyiDurdur() {
+  if (aktifTanima) { try { aktifTanima.abort(); } catch {} aktifTanima = null; }
+  if (aktifKayit) { aktifKayit.bitir?.(); aktifKayit.iptal = true; aktifKayit = null; }
+  modelDinleyici = null;
+}
 
 function etkinlikSayfasi(n) {
   const u = UNITES.find(x => x.hafta === n);
   if (!u) { location.hash = "#/"; return; }
-  const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
+  let motor = motorSec();
   kok.innerHTML = `<div class="ust"><button class="geri" onclick="location.hash='#/hafta/${n}'">‹ ${n}. Hafta</button></div>
   <section class="kart" style="text-align:center">
     <div class="etiket e-a"><i></i>Etkinlik · ${n}. Hafta</div>
     <h2>Söyle, işaretini gör</h2>
     <button class="mik" id="mik" aria-label="Konuşmak için dokun">🎤</button>
-    <p class="soluk" id="durum">${SR ? "Engelleri kaldırmak için lütfen konuşun" : "Bu tarayıcı sesli girişi desteklemiyor; kelimeyi aşağıya yazabilirsin."}</p>
+    <p class="soluk" id="durum">Engelleri kaldırmak için lütfen konuşun</p>
+    <p class="soluk" id="model" style="font-size:13px;margin-top:-4px"></p>
     <div class="soru" id="sonuc">Kelime: —</div>
     <video id="vid" muted loop playsinline style="display:none;width:100%;border-radius:12px;background:#000;max-height:45vh;margin-top:12px"></video>
     <div class="satir" style="margin-top:4px">
@@ -247,11 +355,21 @@ function etkinlikSayfasi(n) {
     <div class="cipler">${u.gruplar.flatMap(g => g.kelimeler).map(([ad, v]) => `<button class="cip" data-v="${v}" data-ad="${kacis(ad)}">${kacis(ad)}</button>`).join("")}</div>
   </section>`;
 
-  const durumYaz = m => { $("#durum").textContent = m; };
+  const durumYaz = m => { const d = $("#durum"); if (d) d.textContent = m; };
+  const modelYaz = () => {
+    const m = $("#model"); if (!m) return;
+    m.textContent = motor !== "yerel" ? "" :
+      modelDurumu === "iniyor" ? `Ses modeli hazırlanıyor… %${modelYuzdesi()} (yalnızca ilk seferde, yaklaşık 40 MB)` :
+      modelDurumu === "hazir" ? "Ses tanıma bu telefonda çalışıyor; sesin cihazdan çıkmaz." :
+      modelDurumu === "hata" ? "Ses modeli yüklenemedi. İnterneti kontrol edip sayfayı yenile ya da kelimeyi yaz." : "";
+  };
+  const yereleGec = () => { motor = "yerel"; yerel.yaz("sesMotoru", "yerel"); modelDinleyici = modelYaz; modelYaz(); whisperYukle().catch(() => {}); };
+  if (motor === "yerel") yereleGec();
+
   const vid = $("#vid");
   const goster = (soylenen, v) => {
-    $("#sonuc").textContent = "Kelime: " + soylenen;
-    if (!v) { vid.style.display = "none"; vid.removeAttribute("src"); durumYaz("Bu kelimenin işareti bulunamadı, başka bir kelime dene."); return; }
+    $("#sonuc").textContent = "Kelime: " + (soylenen || "—");
+    if (!v) { vid.style.display = "none"; vid.removeAttribute("src"); durumYaz("Bu kelimenin işareti bulunamadı, tekrar dene."); return; }
     vid.src = `videos/${v}.mp4`; vid.style.display = "block"; vid.playbackRate = yerel.oku("hiz", 1);
     vid.play().catch(() => {});
     durumYaz("Şimdi sen de işareti kendi ellerinle yap.");
@@ -260,46 +378,78 @@ function etkinlikSayfasi(n) {
     for (const m of metinler) { const v = eslestir(m); if (v) return goster(m.trim(), v); }
     goster((metinler[0] || "").trim(), null);
   };
-
   $("#goster").onclick = () => { const t = $("#yaz").value; if (t.trim()) metindenGoster([t]); };
   $("#yaz").onkeydown = e => { if (e.key === "Enter") $("#goster").click(); };
   kok.querySelectorAll(".cip").forEach(b => b.onclick = () => goster(b.dataset.ad, b.dataset.v));
 
   const mik = $("#mik");
-  mik.onclick = async () => {
-    if (!SR) { durumYaz("Bu tarayıcı sesli girişi desteklemiyor; kelimeyi aşağıya yazabilirsin."); $("#yaz").focus(); return; }
+  const tarayiciIleDinle = () => {
     if (aktifTanima) { aktifTanima.stop(); return; }
-    // Önce mikrofon iznini açıkça iste: izin penceresi çıkar ve sorunun ne olduğu ayırt edilebilir
-    if (!mikIzni && navigator.mediaDevices && navigator.mediaDevices.getUserMedia) {
-      try {
-        const akis = await navigator.mediaDevices.getUserMedia({ audio: true });
-        akis.getTracks().forEach(t => t.stop());
-        mikIzni = true;
-      } catch (err) {
-        durumYaz(
-          err.name === "NotFoundError" ? "Bu cihazda mikrofon bulunamadı. Telefonundan dene ya da kelimeyi aşağıya yaz." :
-          err.name === "NotAllowedError" ? "Mikrofon izni verilmedi. Adres çubuğundaki kilit simgesine dokun, Mikrofon'u \"İzin ver\" yap ve sayfayı yenile." :
-          err.name === "NotReadableError" ? "Mikrofon açılamadı: başka bir uygulama kullanıyor olabilir ya da cihaz ayarlarında kapalı." :
-          "Mikrofon açılamadı (" + err.name + ").");
-        return;
+    const t = new SR_SINIF();
+    // iPhone Safari "kesin sonuç"u çoğu zaman bildirmediği için ara sonuçlar dinlenir
+    t.lang = "tr-TR"; t.interimResults = true; t.continuous = false; t.maxAlternatives = 3;
+    let duyulanlar = [], bitti = false, sessizlik = null;
+    const bitir = (goster = true) => {
+      if (bitti) return; bitti = true;
+      clearTimeout(sessizlik); clearTimeout(azami);
+      try { t.stop(); } catch {}
+      mik.classList.remove("dinliyor");
+      if (!goster) return;
+      if (duyulanlar.length) metindenGoster(duyulanlar); else durumYaz("Ses algılanamadı, tekrar dene.");
+    };
+    const azami = setTimeout(() => bitir(), 6000);
+    t.onstart = () => { mik.classList.add("dinliyor"); durumYaz("Dinliyorum… kelimeyi söyle"); };
+    t.onresult = e => {
+      const tam = [...e.results].map(r => r[0].transcript).join(" ").trim();
+      const son = e.results[e.results.length - 1];
+      duyulanlar = [tam, ...[...son].map(x => x.transcript)].filter(Boolean);
+      $("#sonuc").textContent = "Duyulan: " + tam;
+      if (duyulanlar.some(m => eslestirKesin(m))) return bitir();        // kelime tanındı: hemen göster
+      clearTimeout(sessizlik); sessizlik = setTimeout(() => bitir(), 1300);
+      if (son.isFinal) bitir();
+    };
+    t.onerror = e => {
+      if (e.error === "service-not-allowed" || e.error === "network" || e.error === "language-not-supported") {
+        bitir(false); yereleGec(); durumYaz("Bu tarayıcıda telefonun kendi ses tanıması kullanılacak. Hazır olunca tekrar dokun."); return;
       }
-    }
-    const t = new SR();
-    t.lang = "tr-TR"; t.interimResults = false; t.maxAlternatives = 5;
-    t.onstart = () => { mik.classList.add("dinliyor"); durumYaz("Dinliyorum…"); };
-    t.onresult = e => metindenGoster([...e.results[0]].map(a => a.transcript));
-    t.onerror = e => durumYaz({
-      "not-allowed": "Mikrofon izni verilmedi. Adres çubuğundaki kilit simgesinden Mikrofon'a izin ver ve sayfayı yenile.",
-      "service-not-allowed": "Bu tarayıcı ses tanıma servisine izin vermiyor. Android'de Chrome, iPhone'da Safari kullan ya da kelimeyi yaz.",
-      "audio-capture": "Mikrofon bulunamadı ya da çalışmıyor. Kelimeyi aşağıya yazabilirsin.",
-      "network": "Ses tanıma için internet bağlantısı gerekiyor.",
-      "no-speech": "Ses algılanamadı, tekrar dene.",
-      "aborted": ""
-    }[e.error] ?? "Ses tanınamadı (" + e.error + "), kelimeyi yazabilirsin.");
-    t.onend = () => { if (aktifTanima === t) aktifTanima = null; mik.classList.remove("dinliyor"); };
+      if (e.error === "no-speech" || e.error === "aborted") return bitir();
+      bitir(false);
+      durumYaz({
+        "not-allowed": "Mikrofon izni verilmedi. Adres çubuğundaki simgeden Mikrofon'a izin ver ve sayfayı yenile.",
+        "audio-capture": "Mikrofon bulunamadı ya da çalışmıyor. Kelimeyi aşağıya yazabilirsin."
+      }[e.error] ?? "Ses tanınamadı (" + e.error + "), kelimeyi yazabilirsin.");
+    };
+    t.onend = () => { if (aktifTanima === t) aktifTanima = null; bitir(); };
     aktifTanima = t;
-    try { t.start(); } catch (err) { aktifTanima = null; durumYaz("Mikrofon başlatılamadı: " + err.message); }
+    try { t.start(); } catch (err) { aktifTanima = null; bitir(false); yereleGec(); durumYaz("Telefonun kendi ses tanıması kullanılacak, tekrar dokun."); }
   };
+
+  const yerelIleDinle = async () => {
+    if (aktifKayit) { aktifKayit.bitir?.(); return; }          // ikinci dokunuş kaydı bitirir
+    if (!navigator.mediaDevices?.getUserMedia) { durumYaz("Bu tarayıcı mikrofona erişemiyor; kelimeyi aşağıya yazabilirsin."); return; }
+    const Ctx = window.AudioContext || window.webkitAudioContext;
+    const ctx = new Ctx();                                      // dokunuş anında oluşturulmalı (iPhone kuralı)
+    const kontrol = { basladi: () => { mik.classList.add("dinliyor"); durumYaz("Dinliyorum… kelimeyi söyle (bitirmek için tekrar dokun)"); } };
+    aktifKayit = kontrol;
+    let ses;
+    try { ses = await sesKaydet(ctx, 3500, kontrol); }
+    catch (err) { durumYaz(mikHatasi(err)); return; }
+    finally { if (aktifKayit === kontrol) aktifKayit = null; mik.classList.remove("dinliyor"); ctx.close?.().catch?.(() => {}); }
+    if (kontrol.iptal) return;
+    if (sessizMi(ses)) { durumYaz("Ses algılanamadı, biraz daha yüksek sesle tekrar dene."); return; }
+    mik.disabled = true;
+    durumYaz(modelDurumu === "hazir" ? "Tanınıyor…" : "Ses modeli hazırlanıyor, birazdan tanınacak…");
+    try {
+      const asr = await whisperYukle();
+      durumYaz("Tanınıyor…");
+      const r = await asr(ses, { language: "turkish", task: "transcribe" });
+      if (!$("#mik")) return;                                   // sayfadan çıkıldıysa
+      metindenGoster([String(r.text || "")]);
+    } catch (e) { durumYaz("Ses tanınamadı (" + e.message + "). Kelimeyi aşağıya yazabilirsin."); }
+    finally { mik.disabled = false; }
+  };
+
+  mik.onclick = () => motor === "tarayici" ? tarayiciIleDinle() : yerelIleDinle();
 }
 
 // ---------- SINAV (bekleme odası + quiz) ----------
