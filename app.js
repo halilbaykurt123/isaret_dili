@@ -201,22 +201,26 @@ function oynatici(liste, i, kapaninca) {
 }
 
 // ---------- ETKİNLİK: sesli işaret arama (orijinal Android ekranı) ----------
-const normal = s => String(s || "").toLocaleLowerCase("tr-TR").replace(/[?!.,;:¿¡'"’]/g, "").replace(/\s+/g, " ").trim();
-const SOZLUK = (() => {
-  const h = new Map();
-  // Önce haftalık kelimeler (ünitelerle ve quiz'le aynı video), sonra orijinal sesli arama listesi
-  for (const u of UNITES) for (const g of u.gruplar) for (const [ad, v] of g.kelimeler)
-    for (const parca of ad.split("/")) { const n = normal(parca); if (n && !h.has(n)) h.set(n, v); }
-  for (const [k, v] of Object.entries(window.SESLI_EK || {})) { const n = normal(k); if (n && !h.has(n)) h.set(n, v); }
-  for (const [k, v] of Object.entries(window.SESLI || {})) { const n = normal(k); if (n && !h.has(n)) h.set(n, v); }
-  return h;
-})();
-const SOZLUK_UZUN = [...SOZLUK.keys()].filter(k => k.length >= 2).sort((a, b) => b.length - a.length);
-// Yakın eşleşme yalnızca haftalık Türkçe kelimelerde yapılır (yanlış tanınan sesleri düzeltmek için)
+// Telefon sayıları rakamla yazabilir ("2"); listedeki kelimeye çevrilir ("iki")
+const SAYI = { "0": "sıfır", "1": "bir", "2": "iki", "3": "üç", "4": "dört", "5": "beş", "6": "altı", "7": "yedi", "8": "sekiz", "9": "dokuz", "10": "on", "100": "yüz", "1000": "bin", "1000000": "milyon", "1000000000": "milyar" };
+const normal = s => String(s || "").toLocaleLowerCase("tr-TR")
+  .replace(/(\d)[.,](?=\d{3}\b)/g, "$1")
+  .replace(/[?!.,;:¿¡'"’]/g, "").replace(/\s+/g, " ").trim()
+  .split(" ").map(w => SAYI[w] ?? w).join(" ");
+const buyukHarf = s => s ? s.charAt(0).toLocaleUpperCase("tr-TR") + s.slice(1) : s;
+// Sözlük: haftalık kelimeler > ek sözlük > orijinal liste. Her video için ekranda görünecek ad da tutulur.
+const SOZLUK = new Map(), GORUNEN = {};
+for (const u of UNITES) for (const g of u.gruplar) for (const [ad, v] of g.kelimeler) {
+  GORUNEN[v] ??= ad;
+  for (const parca of ad.split("/")) { const n = normal(parca); if (n && !SOZLUK.has(n)) SOZLUK.set(n, v); }
+}
+for (const kaynak of [window.SESLI_EK || {}, window.SESLI || {}])
+  for (const [k, v] of Object.entries(kaynak)) { const n = normal(k); if (n && !SOZLUK.has(n)) SOZLUK.set(n, v); GORUNEN[v] ??= buyukHarf(k); }
+// Telefonun küçük tanıma hatalarını ("teyzem", "lefkoşe") düzeltmek için yalnızca Türkçe kelimelerle yakın karşılaştırma
 const BULANIK_ADAY = (() => {
   const m = new Map();
   for (const u of UNITES) for (const g of u.gruplar) for (const [ad, v] of g.kelimeler)
-    for (const parca of ad.split("/")) { const n = normal(parca); if (n.length >= 2 && !m.has(n)) m.set(n, v); }
+    for (const parca of ad.split("/")) { const n = normal(parca); if (n.length >= 3 && !m.has(n)) m.set(n, v); }
   for (const [k, v] of Object.entries(window.SESLI_EK || {})) { const n = normal(k); if (n.length >= 3 && !m.has(n)) m.set(n, v); }
   return [...m.entries()];
 })();
@@ -228,32 +232,18 @@ function mesafe(a, b) {
   }
   return d[b.length];
 }
-function eslestirKesin(metin) {
+// Yalnızca söylenen ifadenin TAMAMI bir kelimeye karşılık geliyorsa eşleşir; cümle içindeki kelimeler yakalanmaz
+function eslestir(metin) {
   const t = normal(metin);
   if (!t) return null;
   if (SOZLUK.has(t)) return SOZLUK.get(t);
-  const ara = " " + t + " ";
-  const k = SOZLUK_UZUN.find(k => ara.includes(" " + k + " "));
-  return k ? SOZLUK.get(k) : null;
-}
-function eslestir(metin) {
-  const kesin = eslestirKesin(metin);
-  if (kesin) return kesin;
-  const t = normal(metin);
-  if (!t) return null;
-  // Yakın eşleşme: söylenen metnin her parçasını haftalık kelimelerle karşılaştır
-  const kelimeler = t.split(" ");
+  if (t.length < 3) return null;
   let en = null, enSkor = 0;
   for (const [aday, v] of BULANIK_ADAY) {
-    const n = aday.split(" ").length;
-    for (let i = 0; i + n <= Math.max(kelimeler.length, n); i++) {
-      const parca = kelimeler.slice(i, i + n).join(" ");
-      if (!parca) continue;
-      const skor = 1 - mesafe(parca, aday) / Math.max(parca.length, aday.length);
-      if (skor > enSkor) { enSkor = skor; en = v; }
-    }
+    const skor = 1 - mesafe(t, aday) / Math.max(t.length, aday.length);
+    if (skor > enSkor) { enSkor = skor; en = v; }
   }
-  return enSkor >= 0.72 ? en : null;
+  return enSkor >= 0.8 ? en : null;
 }
 
 // --- Ses motorları ---
@@ -367,20 +357,20 @@ function etkinlikSayfasi(n) {
   if (motor === "yerel") yereleGec();
 
   const vid = $("#vid");
-  const goster = (soylenen, v) => {
-    $("#sonuc").textContent = "Kelime: " + (soylenen || "—");
-    if (!v) { vid.style.display = "none"; vid.removeAttribute("src"); durumYaz("Bu kelimenin işareti bulunamadı, tekrar dene."); return; }
+  const goster = v => {
+    $("#sonuc").textContent = "Kelime: " + (v ? GORUNEN[v] || v : "—");
+    if (!v) { vid.style.display = "none"; vid.removeAttribute("src"); durumYaz("Listede böyle bir kelime yok. Yalnızca kelimeyi tek başına söyle."); return; }
     vid.src = `videos/${v}.mp4`; vid.style.display = "block"; vid.playbackRate = yerel.oku("hiz", 1);
     vid.play().catch(() => {});
     durumYaz("Şimdi sen de işareti kendi ellerinle yap.");
   };
   const metindenGoster = metinler => {
-    for (const m of metinler) { const v = eslestir(m); if (v) return goster(m.trim(), v); }
-    goster((metinler[0] || "").trim(), null);
+    for (const m of metinler) { const v = eslestir(m); if (v) return goster(v); }
+    goster(null);
   };
   $("#goster").onclick = () => { const t = $("#yaz").value; if (t.trim()) metindenGoster([t]); };
   $("#yaz").onkeydown = e => { if (e.key === "Enter") $("#goster").click(); };
-  kok.querySelectorAll(".cip").forEach(b => b.onclick = () => goster(b.dataset.ad, b.dataset.v));
+  kok.querySelectorAll(".cip").forEach(b => b.onclick = () => goster(b.dataset.v));
 
   const mik = $("#mik");
   const tarayiciIleDinle = () => {
@@ -403,9 +393,8 @@ function etkinlikSayfasi(n) {
       const tam = [...e.results].map(r => r[0].transcript).join(" ").trim();
       const son = e.results[e.results.length - 1];
       duyulanlar = [tam, ...[...son].map(x => x.transcript)].filter(Boolean);
-      $("#sonuc").textContent = "Duyulan: " + tam;
-      if (duyulanlar.some(m => eslestirKesin(m))) return bitir();        // kelime tanındı: hemen göster
-      clearTimeout(sessizlik); sessizlik = setTimeout(() => bitir(), 1300);
+      durumYaz("Dinliyorum…");
+      clearTimeout(sessizlik); sessizlik = setTimeout(() => bitir(), 1200);   // konuşma bitince değerlendir
       if (son.isFinal) bitir();
     };
     t.onerror = e => {
