@@ -221,7 +221,7 @@ function eslestir(metin) {
 }
 const videoAdi = (() => { const m = {}; for (const u of UNITES) for (const g of u.gruplar) for (const [ad, v] of g.kelimeler) m[v] ??= ad; return m; })();
 
-let aktifTanima = null;
+let aktifTanima = null, mikIzni = false;
 function dinlemeyiDurdur() { if (aktifTanima) { try { aktifTanima.abort(); } catch {} aktifTanima = null; } }
 
 function etkinlikSayfasi(n) {
@@ -266,17 +266,36 @@ function etkinlikSayfasi(n) {
   kok.querySelectorAll(".cip").forEach(b => b.onclick = () => goster(b.dataset.ad, b.dataset.v));
 
   const mik = $("#mik");
-  mik.onclick = () => {
+  mik.onclick = async () => {
     if (!SR) { durumYaz("Bu tarayıcı sesli girişi desteklemiyor; kelimeyi aşağıya yazabilirsin."); $("#yaz").focus(); return; }
     if (aktifTanima) { aktifTanima.stop(); return; }
+    // Önce mikrofon iznini açıkça iste: izin penceresi çıkar ve sorunun ne olduğu ayırt edilebilir
+    if (!mikIzni && navigator.mediaDevices && navigator.mediaDevices.getUserMedia) {
+      try {
+        const akis = await navigator.mediaDevices.getUserMedia({ audio: true });
+        akis.getTracks().forEach(t => t.stop());
+        mikIzni = true;
+      } catch (err) {
+        durumYaz(
+          err.name === "NotFoundError" ? "Bu cihazda mikrofon bulunamadı. Telefonundan dene ya da kelimeyi aşağıya yaz." :
+          err.name === "NotAllowedError" ? "Mikrofon izni verilmedi. Adres çubuğundaki kilit simgesine dokun, Mikrofon'u \"İzin ver\" yap ve sayfayı yenile." :
+          err.name === "NotReadableError" ? "Mikrofon açılamadı: başka bir uygulama kullanıyor olabilir ya da cihaz ayarlarında kapalı." :
+          "Mikrofon açılamadı (" + err.name + ").");
+        return;
+      }
+    }
     const t = new SR();
     t.lang = "tr-TR"; t.interimResults = false; t.maxAlternatives = 5;
     t.onstart = () => { mik.classList.add("dinliyor"); durumYaz("Dinliyorum…"); };
     t.onresult = e => metindenGoster([...e.results[0]].map(a => a.transcript));
-    t.onerror = e => durumYaz(
-      e.error === "not-allowed" || e.error === "service-not-allowed" ? "Mikrofon izni verilmedi. Tarayıcı ayarlarından izin verip tekrar dene." :
-      e.error === "no-speech" ? "Ses algılanamadı, tekrar dene." :
-      e.error === "aborted" ? "" : "Ses tanınamadı (" + e.error + "), kelimeyi yazabilirsin.");
+    t.onerror = e => durumYaz({
+      "not-allowed": "Mikrofon izni verilmedi. Adres çubuğundaki kilit simgesinden Mikrofon'a izin ver ve sayfayı yenile.",
+      "service-not-allowed": "Bu tarayıcı ses tanıma servisine izin vermiyor. Android'de Chrome, iPhone'da Safari kullan ya da kelimeyi yaz.",
+      "audio-capture": "Mikrofon bulunamadı ya da çalışmıyor. Kelimeyi aşağıya yazabilirsin.",
+      "network": "Ses tanıma için internet bağlantısı gerekiyor.",
+      "no-speech": "Ses algılanamadı, tekrar dene.",
+      "aborted": ""
+    }[e.error] ?? "Ses tanınamadı (" + e.error + "), kelimeyi yazabilirsin.");
     t.onend = () => { if (aktifTanima === t) aktifTanima = null; mik.classList.remove("dinliyor"); };
     aktifTanima = t;
     try { t.start(); } catch (err) { aktifTanima = null; durumYaz("Mikrofon başlatılamadı: " + err.message); }
