@@ -19,18 +19,6 @@ function ogrenildiYap(v, deger) { ogrenilen[v] = deger; if (!deger) delete ogren
 const haftaKelimeleri = u => u.gruplar.flatMap(g => g.kelimeler);
 const haftaIlerleme = u => { const k = haftaKelimeleri(u); return { ok: k.filter(x => ogrenildiMi(x[1])).length, top: k.length }; };
 
-// ---------- Uygunluk görseli (Wikimedia Commons, açık lisans; atıf zorunlu) ----------
-const GIRIS_GORSELI = {
-  url: "https://thumb.wikimedia.org/wikipedia/commons/thumb/1/1e/Wikimedia_Mexico_-_Outreach_class_for_deaf_children.jpg/960px-Wikimedia_Mexico_-_Outreach_class_for_deaf_children.jpg",
-  sayfa: "https://commons.wikimedia.org/wiki/File:Wikimedia_Mexico_-_Outreach_class_for_deaf_children.jpg",
-  baslik: "Wikimedia Mexico - Outreach class for deaf children",
-  yazar: "ProtoplasmaKid",
-  lisans: "CC BY-SA 3.0",
-  lisansUrl: "https://creativecommons.org/licenses/by-sa/3.0/deed.tr",
-  alt: "İşitme engelli çocukların olduğu bir sınıfta işaret dili tercümanı konuşmayı işaretle aktarıyor",
-  hikaye: "Bu sınıftaki çocuklar duyamıyor. Ama sınıfta onların dilini konuşan biri olduğu için hiçbiri dışarıda kalmıyor. Bir gün o kişi sen olabilirsin."
-};
-
 // ---------- Firebase ----------
 let db = null, auth = null, uid = null, durum = {}, fbHata = null;
 try {
@@ -88,11 +76,8 @@ function anaSayfa() {
   const ogrenilenSayi = Object.keys(ogrenilen).length;
   const video = GIRIS_VIDEOSU
     ? `<div class="video-kutu"><iframe src="https://www.youtube-nocookie.com/embed/${encodeURIComponent(GIRIS_VIDEOSU)}?rel=0&playsinline=1" allow="encrypted-media; picture-in-picture" allowfullscreen title="Giriş videosu"></iframe></div>`
-    : `<figure class="gorsel">
-        <img src="${GIRIS_GORSELI.url}" alt="${kacis(GIRIS_GORSELI.alt)}" loading="lazy">
-        <figcaption>${kacis(GIRIS_GORSELI.hikaye)}</figcaption>
-        <div class="kaynak">Fotoğraf: <a href="${GIRIS_GORSELI.sayfa}" target="_blank" rel="noopener">${kacis(GIRIS_GORSELI.baslik)}</a>, ${kacis(GIRIS_GORSELI.yazar)}, Wikimedia Commons, <a href="${GIRIS_GORSELI.lisansUrl}" target="_blank" rel="noopener">${GIRIS_GORSELI.lisans}</a></div>
-      </figure>`;
+    : `<video class="giris-video" src="giris.mp4" poster="giris.jpg" controls playsinline preload="metadata"></video>
+       <p class="soluk" style="font-size:13px;margin:8px 0 0;text-align:center">🔊 Sesi açarak izle.</p>`;
 
   kok.innerHTML = ust(false) + `
   <section class="kart">

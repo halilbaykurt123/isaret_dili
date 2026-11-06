@@ -91,3 +91,4 @@ th{color:var(--soluk);font-size:12px;text-transform:uppercase}
 .gorsel figcaption{font-weight:600;margin-top:10px;line-height:1.45}
 .kaynak{font-size:12px;color:var(--soluk);margin-top:8px}
 .kaynak a{color:inherit}
+.giris-video{width:100%;border-radius:12px;background:#000;display:block;aspect-ratio:16/9}
