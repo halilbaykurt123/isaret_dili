@@ -86,3 +86,8 @@ th{color:var(--soluk);font-size:12px;text-transform:uppercase}
 @keyframes nabiz{0%{box-shadow:0 0 0 0 rgba(214,69,69,.55)}100%{box-shadow:0 0 0 22px rgba(214,69,69,0)}}
 .cipler{display:flex;flex-wrap:wrap;gap:8px}
 .cip{border:1px solid var(--cizgi);background:var(--bg);color:var(--yazi);border-radius:99px;padding:7px 12px;font-size:14px}
+.gorsel{margin:0}
+.gorsel img{width:100%;aspect-ratio:4/3;object-fit:cover;border-radius:12px;display:block;background:var(--cizgi)}
+.gorsel figcaption{font-weight:600;margin-top:10px;line-height:1.45}
+.kaynak{font-size:12px;color:var(--soluk);margin-top:8px}
+.kaynak a{color:inherit}
