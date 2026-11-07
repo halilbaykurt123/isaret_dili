@@ -1,6 +1,6 @@
 import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js";
 import { getAuth, signInAnonymously, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-auth.js";
-import { getDatabase, ref, set, get, push, onValue, off, serverTimestamp } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-database.js";
+import { getDatabase, ref, set, get, remove, onValue, serverTimestamp } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-database.js";
 import { firebaseConfig, GIRIS_VIDEOSU, SORU_SURESI_SN } from "./firebase-config.js";
 
 const UNITES = window.UNITES;
@@ -8,27 +8,59 @@ const $ = s => document.querySelector(s);
 const kok = $("#uygulama");
 const kacis = s => String(s).replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
 
-// ---------- Yerel kayıt (tarayıcıda; sadece kolaylık için) ----------
+// ---------- Yerel kayıt (tarayıcıda; yalnızca önbellek) ----------
 const yerel = {
   oku(k, v) { try { const x = localStorage.getItem(k); return x == null ? v : JSON.parse(x); } catch { return v; } },
   yaz(k, v) { try { localStorage.setItem(k, JSON.stringify(v)); } catch {} }
 };
+
+// ---------- Katılımcı kodu (P1, P2 … ; öğrenci kendisi girer, ad hiçbir yerde tutulmaz) ----------
+// Bir kodu ilk giren telefon o koda bağlanır; telefon değişirse araştırmacı panelden serbest bırakır.
+const kodDuzenle = s => { const m = String(s || "").toUpperCase().replace(/[\s-]+/g, "").match(/^P0*([1-9][0-9]?)$/); return m ? "P" + m[1] : ""; };
+let kod = kodDuzenle(yerel.oku("kod", ""));
+let kodHazir = false, kodMesaji = "";
 let ogrenilen = yerel.oku("ogrenilen", {});
 const ogrenildiMi = v => !!ogrenilen[v];
-function ogrenildiYap(v, deger) { ogrenilen[v] = deger; if (!deger) delete ogrenilen[v]; yerel.yaz("ogrenilen", ogrenilen); }
+function ogrenildiYap(v, deger) {
+  if (deger) ogrenilen[v] = Date.now(); else delete ogrenilen[v];
+  yerel.yaz("ogrenilen", ogrenilen);
+  if (db && kod && kodHazir) {
+    const r = ref(db, `study/progress/${kod}/${v}`);
+    (deger ? set(r, serverTimestamp()) : remove(r)).catch(e => console.warn("İlerleme kaydedilemedi", e));
+  }
+}
 const haftaKelimeleri = u => u.gruplar.flatMap(g => g.kelimeler);
 const haftaIlerleme = u => { const k = haftaKelimeleri(u); return { ok: k.filter(x => ogrenildiMi(x[1])).length, top: k.length }; };
 
 // ---------- Firebase ----------
-let db = null, auth = null, uid = null, durum = {}, fbHata = null;
+let db = null, auth = null, uid = null, durum = {}, fbHata = null, saatFarki = 0;
+const simdi = () => Date.now() + saatFarki;        // sunucu saati (herkes için aynı)
 try {
   const app = initializeApp(firebaseConfig);
   db = getDatabase(app); auth = getAuth(app);
   onAuthStateChanged(auth, u => {
-    if (u) { uid = u.uid; durumuDinle(); toplamPuaniGetir(); }
+    if (!u) return;
+    uid = u.uid; durumuDinle();
+    onValue(ref(db, ".info/serverTimeOffset"), s => { saatFarki = Number(s.val()) || 0; });
+    if (kod) kodBagla(kod).then(() => { if (!sinavCalisiyor) ciz(); }).catch(e => {
+      if (/permission/i.test(e.message)) { kodMesaji = `${kod} kodu başka bir telefona bağlı. Kodunu kontrol et; telefon değiştirdiysen araştırmacıya söyle.`; kodBirak(); }
+      else fbHata = e.message;
+      if (!sinavCalisiyor) ciz();
+    });
   });
   signInAnonymously(auth).catch(e => { fbHata = e.message; ciz(); });
 } catch (e) { fbHata = e.message; }
+
+async function kodBagla(k) {
+  await set(ref(db, `study/participants/${k}/uid`), uid);     // kod başka telefona bağlıysa izin hatası verir
+  kod = k; kodHazir = true; yerel.yaz("kod", k);
+  const s = await get(ref(db, `study/progress/${k}`));
+  const uzak = s.val() || {};
+  for (const v of Object.keys(ogrenilen)) if (!uzak[v]) { uzak[v] = Date.now(); set(ref(db, `study/progress/${k}/${v}`), serverTimestamp()).catch(() => {}); }
+  ogrenilen = uzak; yerel.yaz("ogrenilen", ogrenilen);
+  await toplamPuaniGetir();
+}
+function kodBirak() { kod = ""; kodHazir = false; ogrenilen = {}; toplamPuan = null; yerel.yaz("kod", ""); yerel.yaz("ogrenilen", {}); }
 
 let durumDinleniyor = false;
 function durumuDinle() {
@@ -38,8 +70,9 @@ function durumuDinle() {
 }
 let toplamPuan = null;
 async function toplamPuaniGetir() {
+  if (!kod || !kodHazir) return;
   try {
-    const s = await get(ref(db, `exam/scores/${uid}`));
+    const s = await get(ref(db, `study/scores/${kod}`));
     let t = 0; s.forEach(h => h.forEach(p => { t += Number(p.val().score) || 0; }));
     toplamPuan = t; if (!sinavCalisiyor && rota().ad === "ana") ciz();
   } catch { toplamPuan = null; }
@@ -59,15 +92,40 @@ window.addEventListener("hashchange", () => { dinlemeyiDurdur(); if (sinavCalisi
 
 function ust(geri) {
   return `<div class="ust">${geri ? `<button class="geri" onclick="location.hash='#/'">‹ Ana sayfa</button>` :
-    `<img src="icon-192.png" alt=""><h1>Sesli İşaret Dili</h1>`}</div>`;
+    `<img src="icon-192.png" alt=""><h1>Sesli İşaret Dili</h1>${kod ? `<span class="kod-rozet">${kacis(kod)}</span>` : ""}`}</div>`;
 }
 
 function ciz() {
+  if (!kod) return kodEkrani();
   const r = rota();
   if (r.ad === "hafta") return haftaSayfasi(r.n);
   if (r.ad === "sinav") return sinavSayfasi();
   if (r.ad === "etkinlik") return etkinlikSayfasi(r.n);
   anaSayfa();
+}
+
+// ---------- KOD GİRİŞ EKRANI (ilk açılış) ----------
+function kodEkrani(mesaj) {
+  mesaj = mesaj || kodMesaji; kodMesaji = "";
+  kok.innerHTML = ust(false) + `<section class="kart">
+    <div class="etiket e-a"><i></i>Hoş geldin</div>
+    <h2>Katılımcı kodunu gir</h2>
+    <p class="soluk">Araştırmacının sana verdiği kodu yaz, örneğin <b>P7</b>. İlerlemen ve quiz puanların bu kodla kaydedilir; adın hiçbir yerde tutulmaz.</p>
+    <input type="text" id="kod" autocapitalize="characters" autocomplete="off" maxlength="5" placeholder="P1">
+    <button class="btn" id="kodgir">Devam et</button>
+    ${mesaj ? `<div class="uyari">${kacis(mesaj)}</div>` : ""}
+    ${fbHata ? `<div class="uyari">Bağlantı sorunu: ${kacis(fbHata)}</div>` : ""}
+  </section>`;
+  const gir = async () => {
+    const k = kodDuzenle($("#kod").value);
+    if (!k) return kodEkrani("Kod P harfi ve bir sayıdan oluşur, örneğin P7.");
+    if (!uid) return kodEkrani("Sunucuya bağlanılıyor, birkaç saniye sonra tekrar dene.");
+    $("#kodgir").disabled = true; $("#kodgir").textContent = "Kontrol ediliyor…";
+    try { await kodBagla(k); ciz(); }
+    catch (e) { kodEkrani(/permission/i.test(e.message) ? `${k} kodu başka bir telefona bağlı. Kodunu kontrol et; telefon değiştirdiysen araştırmacıya söyle.` : "Bağlantı sorunu: " + e.message); }
+  };
+  $("#kodgir").onclick = gir;
+  $("#kod").onkeydown = e => { if (e.key === "Enter") gir(); };
 }
 
 // ---------- ANA SAYFA (ARCS) ----------
@@ -157,7 +215,7 @@ function haftaSayfasi(n) {
   <section class="kart">
     <div class="etiket e-s"><i></i>${n}. Hafta Quiz</div>
     <h3>Kendini dene</h3>
-    <p class="soluk">Quiz ders sonunda, araştırmacı açtığında başlar. Her soru için 15 saniyen var; ne kadar hızlı cevaplarsan o kadar çok puan alırsın.</p>
+    <p class="soluk">Quiz ders sonunda herkes için aynı anda başlar. Her soru için 15 saniyen var; ne kadar hızlı cevaplarsan o kadar çok puan alırsın. Cevap verince diğerlerini beklersin, ardından puan tablosu gelir.</p>
     ${(() => {
       const acik = sinavAcik() && Number(durum.week) === n;
       return `<button class="btn" ${acik ? "" : "disabled"} onclick="location.hash='#/sinav'">
@@ -442,169 +500,249 @@ function etkinlikSayfasi(n) {
   mik.onclick = () => motor === "tarayici" ? tarayiciIleDinle() : yerelIleDinle();
 }
 
-// ---------- SINAV (bekleme odası + quiz) ----------
-let sinavCalisiyor = false, lobiDinleyici = null, soruZamanlayici = null;
+// ---------- SINAV: senkron quiz + canlı puan tablosu ----------
+// Herkes aynı anda başlar ve biter. Her sorunun zamanı sunucu saatine göre hesaplanır:
+// 15 sn cevap → 2 sn doğru cevap → 5 sn puan tablosu → sıradaki soru.
+const SORU_MS = SORU_SURESI_SN * 1000, CEVAP_MS = 2000, TABLO_MS = 5000;
+const DONGU_MS = SORU_MS + CEVAP_MS + TABLO_MS, GERI_SAYIM_MS = 3000, TABLO_SATIR = 5, SATIR_H = 54;
+let sinavCalisiyor = false, quizOturum = null;
+
+const bekleMs = ms => new Promise(r => setTimeout(r, ms));
+const karistir = a => { a = a.slice(); for (let i = a.length - 1; i > 0; i--) { const j = Math.floor(Math.random() * (i + 1)); [a[i], a[j]] = [a[j], a[i]]; } return a; };
+// Android uygulamasıyla aynı hız puanı (doğru cevap = 1 + hız puanı)
+const hizPuani = s => s <= 1 ? 50 : s <= 2 ? 40 : s <= 5 ? 25 : s <= 7 ? 15 : s <= 14 ? 5 : 1;
+const hataKart = m => { kok.innerHTML = ust(true) + `<div class="kart"><div class="uyari">${kacis(m)}</div></div>`; };
 
 function sinaviBirak() {
   sinavCalisiyor = false;
-  clearInterval(soruZamanlayici);
-  if (lobiDinleyici) { off(ref(db, "lobby/players"), "value", lobiDinleyici); lobiDinleyici = null; }
+  if (quizOturum) { clearInterval(quizOturum.zamanlayici); quizOturum.tabloKapat?.(); quizOturum = null; }
 }
 
 function sinavSayfasi() {
-  if (!db || fbHata) { kok.innerHTML = ust(true) + `<div class="kart"><div class="uyari">Sunucuya bağlanılamadı. ${kacis(fbHata || "")}</div></div>`; return; }
-  if (!uid) { kok.innerHTML = ust(true) + `<div class="kart"><p>Bağlanıyor…</p></div>`; return; }
+  if (!db || fbHata) return hataKart("Sunucuya bağlanılamadı. " + (fbHata || ""));
+  if (!uid || !kodHazir) { kok.innerHTML = ust(true) + `<div class="kart"><p>Bağlanıyor…</p></div>`; return; }
+  if (quizOturum) return;
   if (!sinavAcik()) {
     kok.innerHTML = ust(true) + `<div class="kart"><div class="buyuk-ikon">🔒</div><h2 style="text-align:center">Quiz şu an kapalı</h2>
       <p class="soluk" style="text-align:center">Quiz sadece ders saatinde, araştırmacı açtığında erişilebilir.</p></div>`;
     return;
   }
-  const ad = yerel.oku("ad", "");
-  if (!ad) {
-    kok.innerHTML = ust(true) + `<div class="kart"><div class="etiket e-s"><i></i>${durum.week}. Hafta Quiz</div>
-      <h2>Adın ve soyadın</h2><p class="soluk">Puanların bu isimle kaydedilecek.</p>
-      <input type="text" id="ad" maxlength="40" autocomplete="name" placeholder="Örn. Ayşe Yılmaz">
-      <button class="btn" id="kat">Bekleme odasına gir</button></div>`;
-    $("#kat").onclick = () => {
-      const v = $("#ad").value.trim().replace(/\s+/g, " ");
-      if (v.length < 3) { $("#ad").focus(); return; }
-      yerel.yaz("ad", v); sinavSayfasi();
-    };
-    return;
-  }
-  bekle(ad);
+  girisYap();
 }
 
-async function bekle(ad) {
+async function girisYap() {
+  if (sinavCalisiyor) return;
   sinavCalisiyor = true;
-  const hk = "week" + durum.week;
+  const hk = "week" + Number(durum.week);
   try {
-    const bitti = await get(ref(db, `exam/done/${uid}/${hk}`));
-    if (bitti.exists()) {
-      sinavCalisiyor = false;
-      const d = bitti.val();
-      kok.innerHTML = ust(true) + `<div class="kart"><div class="buyuk-ikon">✅</div><h2 style="text-align:center">Bu haftanın quiz'ini tamamladın</h2>
-        <p class="soluk" style="text-align:center">${d.toplam} sorudan ${d.dogru} doğru · ${d.puan} puan</p></div>`;
-      return;
-    }
-    await set(ref(db, `lobby/players/${uid}`), { name: ad, joinedAt: serverTimestamp() });
-  } catch (e) {
-    sinavCalisiyor = false;
-    kok.innerHTML = ust(true) + `<div class="kart"><div class="uyari">Bekleme odasına girilemedi: ${kacis(e.message)}</div></div>`;
-    return;
-  }
-  if (durum.phase === "in_progress") return quiziBaslat(ad);
+    const bitti = await get(ref(db, `study/done/${kod}/${hk}`));
+    if (bitti.exists()) { sinavCalisiyor = false; return tamamlandiEkrani(bitti.val()); }
+    await set(ref(db, `lobby/players/${kod}`), { joinedAt: serverTimestamp() });
+  } catch (e) { sinavCalisiyor = false; return hataKart("Bekleme odasına girilemedi: " + e.message); }
+  if (durum.phase === "in_progress") return quiziBaslat();
   kok.innerHTML = ust(true) + `<div class="kart" style="text-align:center">
     <div class="etiket e-s"><i></i>${durum.week}. Hafta Quiz</div>
     <h2>Bekleme odası</h2>
-    <p class="soluk">Merhaba <b>${kacis(ad)}</b>! Quiz başladığında ekran kendiliğinden açılacak.</p>
-    <div class="oyuncular" id="oyuncular"></div></div>`;
-  lobiDinleyici = onValue(ref(db, "lobby/players"), s => {
-    const k = $("#oyuncular"); if (!k) return;
-    const adlar = []; s.forEach(c => { adlar.push(c.val().name); });
-    k.innerHTML = adlar.map(a => `<span>${kacis(a)}</span>`).join("");
-  }, () => {});
+    <div class="buyuk-ikon bekle-ikon">⏳</div>
+    <p>Kodun: <b>${kacis(kod)}</b></p>
+    <p class="soluk">Quiz herkes için aynı anda başlayacak; ekran kendiliğinden açılır. Bu sayfadan ayrılma.</p></div>`;
+}
+
+function tamamlandiEkrani(d) {
+  kok.innerHTML = ust(true) + `<div class="kart"><div class="buyuk-ikon">✅</div><h2 style="text-align:center">Bu haftanın quiz'ini tamamladın</h2>
+    <p class="soluk" style="text-align:center">${d.toplam} sorudan ${d.dogru} doğru · ${d.puan} puan</p></div>`;
 }
 
 function sinavDurumDegisti() {
   if (rota().ad !== "sinav") return;
-  if (durum.phase === "in_progress" && !quizBasladi) quiziBaslat(yerel.oku("ad", ""));
-  else if (!sinavAcik() && !quizBasladi) { sinaviBirak(); ciz(); }
+  if (durum.phase === "in_progress" && !quizOturum) quiziBaslat();
+  else if (quizOturum && durum.phase !== "in_progress") quiziBitir(quizOturum);   // araştırmacı quiz'i kapattı
+  else if (!sinavAcik() && !quizOturum) { sinaviBirak(); ciz(); }
 }
 
-let quizBasladi = false;
-async function quiziBaslat(ad) {
-  if (quizBasladi) return;
-  quizBasladi = true;
-  if (lobiDinleyici) { off(ref(db, "lobby/players"), "value", lobiDinleyici); lobiDinleyici = null; }
-  const hafta = Number(durum.week), hk = "week" + hafta;
-  let sorular;
+async function quiziBaslat() {
+  if (quizOturum) return;
+  const hafta = Number(durum.week), hk = "week" + hafta, baslangic = Number(durum.startedAt);
+  const o = quizOturum = { hafta, hk, baslangic, sorular: [], secenekler: [], cevaplar: {}, puan: 0, dogru: 0, tablo: {}, oncekiSira: {}, gorulen: new Set(), sonEkran: "", zamanlayici: null };
+  sinavCalisiyor = true;
+  kok.innerHTML = ust(true) + `<div class="kart"><p style="text-align:center">Quiz hazırlanıyor…</p></div>`;
   try {
-    const s = await get(ref(db, `quiz/${hk}`));
-    sorular = s.val();
-  } catch (e) {
-    quizBasladi = false; sinavCalisiyor = false;
-    kok.innerHTML = ust(true) + `<div class="kart"><div class="uyari">Sorular alınamadı: ${kacis(e.message)}</div></div>`;
-    return;
-  }
-  if (!sorular || !sorular.length) {
-    quizBasladi = false; sinavCalisiyor = false;
-    kok.innerHTML = ust(true) + `<div class="kart"><div class="uyari">Bu hafta için soru yüklenmemiş.</div></div>`;
-    return;
-  }
-  sorular = karistir(sorular);
-  // Videoları önceden yükle
-  sorular.forEach(q => { const l = document.createElement("link"); l.rel = "prefetch"; l.href = `videos/${q.v}.mp4`; document.head.appendChild(l); });
-
-  let i = 0, dogru = 0, puan = 0;
-  // 3 saniyelik geri sayım
-  for (let n = 3; n > 0; n--) {
-    kok.innerHTML = ust(true) + `<div class="kart"><p style="text-align:center" class="soluk">${hafta}. Hafta Quiz · ${sorular.length} soru</p><div class="sayac">${n}</div></div>`;
-    await bekleMs(1000);
-  }
-  while (i < sorular.length) {
-    const sonuc = await soruSor(sorular[i], i, sorular.length);
-    if (sonuc.dogru) {
-      dogru++; puan += sonuc.puan;
-      push(ref(db, `exam/scores/${uid}/${hk}`), { score: sonuc.puan, timestamp: serverTimestamp(), name: ad }).catch(() => {});
+    const [bitti, sorular, onceki, deneme] = await Promise.all([
+      get(ref(db, `study/done/${kod}/${hk}`)), get(ref(db, `quiz/${hk}`)),
+      get(ref(db, `study/scores/${kod}/${hk}`)), get(ref(db, `study/attempt/${kod}/${hk}`))]);
+    if (bitti.exists()) { quizOturum = null; sinavCalisiyor = false; return tamamlandiEkrani(bitti.val()); }
+    o.sorular = sorular.val() || [];
+    if (!o.sorular.length) throw new Error("Bu hafta için soru yüklenmemiş.");
+    // Sayfa yenilendiyse daha önce verilen cevaplar korunur
+    for (const [k, c] of Object.entries(onceki.val() || {})) { o.cevaplar[k] = c; o.puan += Number(c.score) || 0; if (c.dogru) o.dogru++; }
+    const gecen = simdi() - baslangic - GERI_SAYIM_MS;
+    if (gecen >= o.sorular.length * DONGU_MS && !deneme.exists()) {
+      quizOturum = null; sinavCalisiyor = false;
+      return hataKart("Bu quiz bitti; geç katıldığın için cevap veremezsin. Araştırmacıya söyle.");
     }
-    i++;
+    if (!deneme.exists()) await set(ref(db, `study/attempt/${kod}/${hk}`), { uid, at: serverTimestamp() });
+    await set(ref(db, `study/board/${hk}/${kod}`), { puan: o.puan });
+  } catch (e) {
+    quizOturum = null; sinavCalisiyor = false;
+    return hataKart(/permission/i.test(e.message) ? "Quiz'e katılınamadı. Araştırmacıya söyle." : e.message);
   }
-  try { await set(ref(db, `exam/done/${uid}/${hk}`), { dogru, toplam: sorular.length, puan, name: ad, at: serverTimestamp() }); } catch {}
-  quizBasladi = false; sinavCalisiyor = false;
+  // Herkes aynı soru sırasını görür; seçeneklerin sırası her öğrencide farklı (kopyaya karşı)
+  o.secenekler = o.sorular.map(q => karistir([q.c, ...q.w]));
+  o.sorular.forEach(q => { const l = document.createElement("link"); l.rel = "prefetch"; l.href = `videos/${q.v}.mp4`; document.head.appendChild(l); });
+  o.tabloKapat = onValue(ref(db, `study/board/${hk}`), s => { o.tablo = s.val() || {}; }, () => {});
+  o.zamanlayici = setInterval(() => tik(o), 200);
+  tik(o);
+}
+
+const soruBasi = (o, i) => o.baslangic + GERI_SAYIM_MS + i * DONGU_MS;
+
+// Her 200 ms'de sunucu saatine bakıp hangi ekranda olunması gerektiğini bulur
+function tik(o) {
+  if (quizOturum !== o || o.bitti) return;
+  const n = o.sorular.length, t = simdi() - o.baslangic - GERI_SAYIM_MS;
+  let ekran, i = 0;
+  if (t < 0) ekran = "sayac:" + Math.ceil(-t / 1000);
+  else {
+    i = Math.floor(t / DONGU_MS);
+    const ic = t - i * DONGU_MS;
+    ekran = i >= n ? "son" : (ic < SORU_MS ? "soru:" : ic < SORU_MS + CEVAP_MS ? "cevap:" : "tablo:") + i;
+  }
+  if (ekran === o.sonEkran) { if (ekran.startsWith("soru:")) sureGuncelle(o, i); return; }
+  o.sonEkran = ekran;
+  const [tur, x] = ekran.split(":");
+  if (tur === "sayac") sayacEkrani(o, Number(x));
+  else if (tur === "soru") soruEkrani(o, Number(x));
+  else if (tur === "cevap") cevapEkrani(o, Number(x));
+  else if (tur === "tablo") tabloEkrani(o, Number(x));
+  else quiziBitir(o);
+}
+
+const ustBilgi = (o, i) => `<div class="bilgi"><span>Soru ${i + 1}/${o.sorular.length}</span><span>${kacis(kod)} · <b>${o.puan}</b> puan</span></div>`;
+
+function sayacEkrani(o, sn) {
+  kok.innerHTML = `<div class="kart"><p style="text-align:center" class="soluk">${o.hafta}. Hafta Quiz · ${o.sorular.length} soru</p>
+    <div class="sayac">${sn}</div><p class="soluk" style="text-align:center">Herkes aynı anda başlıyor</p></div>`;
+}
+
+function soruEkrani(o, i) {
+  const q = o.sorular[i];
+  o.gorulen.add(i);
+  if (o.cevaplar["q" + i]) return bekleEkrani(o, i);
+  kok.innerHTML = `<div class="kart">${ustBilgi(o, i)}
+    <div class="sure"><span id="sure" style="width:100%"></span></div>
+    <video src="videos/${q.v}.mp4" autoplay muted loop playsinline style="width:100%;border-radius:12px;background:#000;max-height:42vh"></video>
+    <p class="soluk" style="margin:10px 0 0">Bu işaret ne anlama geliyor? <span id="kalan" style="float:right"></span></p>
+    <div class="secenekler">${o.secenekler[i].map((s, k) => `<button class="secenek" data-k="${k}">${kacis(s)}</button>`).join("")}</div></div>`;
+  sureGuncelle(o, i);
+  kok.querySelectorAll(".secenek").forEach(b => b.onclick = () => {
+    if (o.cevaplar["q" + i] || simdi() >= soruBasi(o, i) + SORU_MS) return;
+    const sure = Math.max(0, (simdi() - soruBasi(o, i)) / 1000);
+    const secilen = o.secenekler[i][Number(b.dataset.k)], dogru = secilen === q.c;
+    const kayit = { v: q.v, secilen, dogru, score: dogru ? 1 + hizPuani(sure) : 0, sure: Math.round(sure * 10) / 10 };
+    o.cevaplar["q" + i] = kayit;
+    if (dogru) { o.puan += kayit.score; o.dogru++; }
+    set(ref(db, `study/scores/${kod}/${o.hk}/q${i}`), { ...kayit, timestamp: serverTimestamp() }).catch(e => console.warn("Cevap kaydedilemedi", e));
+    set(ref(db, `study/board/${o.hk}/${kod}`), { puan: o.puan }).catch(() => {});
+    bekleEkrani(o, i);
+  });
+}
+
+function sureGuncelle(o, i) {
+  const kalan = Math.max(0, soruBasi(o, i) + SORU_MS - simdi());
+  const s = $("#sure"), k = $("#kalan");
+  if (s) s.style.width = (kalan / SORU_MS * 100) + "%";
+  if (k) k.textContent = Math.ceil(kalan / 1000) + " sn";
+}
+
+function bekleEkrani(o, i) {
+  kok.innerHTML = `<div class="kart" style="text-align:center">${ustBilgi(o, i)}
+    <div class="sure"><span id="sure" style="width:100%"></span></div>
+    <div class="buyuk-ikon bekle-ikon" style="margin-top:28px">✋</div>
+    <h2>Cevabın alındı</h2>
+    <p class="soluk">Diğerleri bekleniyor… <span id="kalan"></span></p></div>`;
+  sureGuncelle(o, i);
+}
+
+function cevapEkrani(o, i) {
+  const q = o.sorular[i], c = o.cevaplar["q" + i];
+  // Hiç cevap vermediyse analiz için "cevapsız" olarak kaydedilir
+  if (!c && o.gorulen.has(i)) {
+    const kayit = { v: q.v, secilen: null, dogru: false, score: 0, sure: null, cevapsiz: true };
+    o.cevaplar["q" + i] = kayit;
+    set(ref(db, `study/scores/${kod}/${o.hk}/q${i}`), { ...kayit, timestamp: serverTimestamp() }).catch(() => {});
+  }
+  const sonuc = !c ? `<div class="sonuc-kutu yanlis">⏰ Süre doldu</div>`
+    : c.dogru ? `<div class="sonuc-kutu dogru">✅ Doğru! <b>+${c.score}</b></div>`
+    : `<div class="sonuc-kutu yanlis">❌ Yanlış</div>`;
+  kok.innerHTML = `<div class="kart">${ustBilgi(o, i)}
+    ${sonuc}
+    <p class="soluk" style="margin:12px 0 0">Doğru cevap:</p>
+    <div class="secenekler">${o.secenekler[i].map(s => `<button class="secenek ${s === q.c ? "dogru" : c && s === c.secilen ? "yanlis" : ""}" disabled>${kacis(s)}</button>`).join("")}</div></div>`;
+}
+
+// Bu ekrandaki sıralama: herkesin güncel toplamı (kendi puanı yerelden, en güncel haliyle)
+function siralama(o) {
+  const t = { ...o.tablo, [kod]: { puan: o.puan } };
+  return Object.entries(t).map(([k, x]) => ({ k, p: Number(x && x.puan) || 0 }))
+    .sort((a, b) => b.p - a.p || a.k.localeCompare(b.k, "tr", { numeric: true }));
+}
+
+function tabloEkrani(o, i) {
+  const liste = siralama(o), n = o.sorular.length, onceki = o.oncekiSira;
+  const ilk = liste.slice(0, TABLO_SATIR), benSira = liste.findIndex(x => x.k === kod);
+  const benArtis = o.cevaplar["q" + i]?.score || 0;
+  kok.innerHTML = `<div class="kart">
+    <div class="bilgi"><span>Soru ${i + 1}/${n} sonrası</span><span>${i + 1 < n ? "Sıradaki soru geliyor…" : "Son sonuçlar geliyor…"}</span></div>
+    <h2 style="text-align:center;margin:10px 0 14px">🏆 Puan Durumu</h2>
+    <div class="tablo" style="height:${ilk.length * SATIR_H}px">${ilk.map((x, s) => {
+      const os = Math.min(onceki[x.k]?.sira ?? TABLO_SATIR, TABLO_SATIR), op = onceki[x.k]?.p ?? 0, artis = x.p - op;
+      return `<div class="tsatir ${x.k === kod ? "ben" : ""}" data-s="${s}" data-os="${os}" style="top:${s * SATIR_H}px">
+        <span class="sira">${["🥇", "🥈", "🥉"][s] || s + 1}</span>
+        <span class="kodad">${kacis(x.k)}${x.k === kod ? " (sen)" : ""}</span>
+        ${artis > 0 ? `<span class="artis">+${artis}</span>` : ""}
+        <span class="tpuan" data-from="${op}" data-to="${x.p}">${op}</span></div>`;
+    }).join("")}</div>
+    ${benSira >= TABLO_SATIR ? `<div class="kendi-sira">Sen: <b>${benSira + 1}.</b> sıradasın · <b>${o.puan}</b> puan ${benArtis ? `<span class="artis">+${benArtis}</span>` : ""}</div>` : ""}
+  </div>`;
+  // Animasyon: satırlar önceki sırasından yeni sırasına kayar, yeni girenler alttan belirir, puanlar sayarak artar
+  const satirlar = [...kok.querySelectorAll(".tsatir")];
+  satirlar.forEach(r => {
+    const os = Number(r.dataset.os);
+    r.style.transform = `translateY(${(os - Number(r.dataset.s)) * SATIR_H}px)`;
+    if (os >= TABLO_SATIR) r.style.opacity = "0";
+  });
+  requestAnimationFrame(() => requestAnimationFrame(() => satirlar.forEach(r => { r.style.transform = "translateY(0)"; r.style.opacity = "1"; })));
+  const bas = performance.now();
+  const say = () => {
+    const k = Math.min((performance.now() - bas) / 1000, 1), e = 1 - Math.pow(1 - k, 3);
+    kok.querySelectorAll(".tpuan").forEach(el => { const a = +el.dataset.from, b = +el.dataset.to; el.textContent = Math.round(a + (b - a) * e); });
+    if (k < 1 && quizOturum === o) requestAnimationFrame(say);
+  };
+  requestAnimationFrame(say);
+  o.oncekiSira = Object.fromEntries(liste.map((x, s) => [x.k, { sira: s, p: x.p }]));
+}
+
+async function quiziBitir(o) {
+  if (o.bitti) return;
+  o.bitti = true;
+  clearInterval(o.zamanlayici);
+  const liste = siralama(o), n = o.sorular.length, sira = liste.findIndex(x => x.k === kod) + 1;
+  o.tabloKapat?.();
+  try { await set(ref(db, `study/done/${kod}/${o.hk}`), { dogru: o.dogru, toplam: n, puan: o.puan, at: serverTimestamp() }); } catch {}
+  if (quizOturum === o) quizOturum = null;
+  sinavCalisiyor = false;
   toplamPuaniGetir();
-  const u = UNITES.find(x => x.hafta === hafta), sonraki = UNITES.find(x => x.hafta === hafta + 1);
-  const ogr = u ? haftaIlerleme(u).ok : 0;
+  const u = UNITES.find(x => x.hafta === o.hafta), sonraki = UNITES.find(x => x.hafta === o.hafta + 1);
+  const ogr = u ? haftaIlerleme(u).ok : 0, ilk3 = liste.slice(0, 3);
   kok.innerHTML = ust(true) + `<div class="kart" style="text-align:center">
     <div class="etiket e-s"><i></i>Doyum</div>
-    <div class="buyuk-ikon">${dogru / sorular.length >= 0.5 ? "🎉" : "💪"}</div>
-    <h2>${dogru / sorular.length >= 0.5 ? "Tebrikler!" : "İyi denemeydi!"}</h2>
-    <div class="puan" style="margin:14px 0"><div><b>${dogru}/${sorular.length}</b><small>doğru</small></div><div><b>${puan}</b><small>puan</small></div></div>
+    <div class="buyuk-ikon">${o.dogru / n >= 0.5 ? "🎉" : "💪"}</div>
+    <h2>${o.dogru / n >= 0.5 ? "Tebrikler!" : "İyi denemeydi!"}</h2>
+    <div class="podyum">${ilk3.map((x, s) => `<div class="p${s + 1} ${x.k === kod ? "ben" : ""}"><span>${["🥇", "🥈", "🥉"][s]}</span><b>${kacis(x.k)}</b><small>${x.p} puan</small></div>`).join("")}</div>
+    <div class="puan" style="margin:14px 0"><div><b>${o.dogru}/${n}</b><small>doğru</small></div><div><b>${o.puan}</b><small>puan</small></div>${sira > 3 ? `<div><b>${sira}.</b><small>sıra</small></div>` : ""}</div>
     ${ogr ? `<p>Bu hafta <b>${ogr}</b> işaret öğrendin.</p>` : ""}
     ${sonraki ? `<p class="soluk">Gelecek hafta: <b>${kacis(sonraki.baslik)}</b></p>` : `<p class="soluk">Altı haftayı tamamladın. Emeğin için teşekkürler!</p>`}
     <button class="btn" onclick="location.hash='#/'">Ana sayfaya dön</button></div>`;
-}
-
-const bekleMs = ms => new Promise(r => setTimeout(r, ms));
-const karistir = a => { a = a.slice(); for (let i = a.length - 1; i > 0; i--) { const j = Math.floor(Math.random() * (i + 1)); [a[i], a[j]] = [a[j], a[i]]; } return a; };
-// Android uygulamasıyla aynı hız puanı
-const hizPuani = s => s <= 1 ? 50 : s <= 2 ? 40 : s <= 5 ? 25 : s <= 7 ? 15 : s <= 14 ? 5 : 1;
-
-function soruSor(q, i, n) {
-  return new Promise(cozum => {
-    const secenekler = karistir([q.c, ...q.w]);
-    kok.innerHTML = ust(true) + `<div class="kart">
-      <div class="bilgi"><span>Soru ${i + 1}/${n}</span><span id="kalan">${SORU_SURESI_SN} sn</span></div>
-      <div class="sure"><span id="sure" style="width:100%"></span></div>
-      <video src="videos/${q.v}.mp4" autoplay muted loop playsinline style="width:100%;border-radius:12px;background:#000;max-height:45vh"></video>
-      <p class="soluk" style="margin:10px 0 0">Bu işaret ne anlama geliyor?</p>
-      <div class="secenekler">${secenekler.map((s, k) => `<button class="secenek" data-k="${k}">${kacis(s)}</button>`).join("")}</div>
-      <div class="mesaj" id="mesaj"></div></div>`;
-    const baslangic = performance.now();
-    let kalan = SORU_SURESI_SN, bitti = false;
-    requestAnimationFrame(() => { $("#sure").style.width = ((kalan - 1) / SORU_SURESI_SN * 100) + "%"; });
-    const butonlar = [...kok.querySelectorAll(".secenek")];
-    const bitir = (sonuc, secilen) => {
-      if (bitti) return; bitti = true;
-      clearInterval(soruZamanlayici);
-      butonlar.forEach(b => { b.disabled = true; if (b.textContent === q.c) b.classList.add("dogru"); });
-      if (secilen && !sonuc.dogru) secilen.classList.add("yanlis");
-      $("#mesaj").textContent = sonuc.dogru ? `✅ Doğru! +${sonuc.puan} puan` : secilen ? `❌ Doğru cevap: ${q.c}` : `⏰ Süre doldu. Doğru cevap: ${q.c}`;
-      setTimeout(() => cozum(sonuc), 1800);
-    };
-    butonlar.forEach(b => b.onclick = () => {
-      const sn = (performance.now() - baslangic) / 1000;
-      const dogruMu = secenekler[Number(b.dataset.k)] === q.c;
-      bitir({ dogru: dogruMu, puan: dogruMu ? 1 + hizPuani(sn) : 0 }, b);
-    });
-    soruZamanlayici = setInterval(() => {
-      kalan--;
-      const k = $("#kalan"), s = $("#sure");
-      if (k) k.textContent = Math.max(kalan, 0) + " sn";
-      if (s) s.style.width = (Math.max(kalan - 1, 0) / SORU_SURESI_SN * 100) + "%";
-      if (kalan <= 0) bitir({ dogru: false, puan: 0 }, null);
-    }, 1000);
-  });
 }
 
 ciz();

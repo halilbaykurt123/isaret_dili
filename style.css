@@ -92,3 +92,23 @@ th{color:var(--soluk);font-size:12px;text-transform:uppercase}
 .kaynak{font-size:12px;color:var(--soluk);margin-top:8px}
 .kaynak a{color:inherit}
 .giris-video{width:100%;border-radius:12px;background:#000;display:block;aspect-ratio:16/9}
+.kod-rozet{margin-left:auto;background:var(--mor-acik);color:var(--mor);font-weight:800;font-size:13px;border-radius:99px;padding:4px 10px}
+.tablo{position:relative}
+.tsatir{position:absolute;left:0;right:0;height:46px;display:flex;align-items:center;gap:10px;padding:0 12px;border-radius:12px;background:var(--bg);border:1px solid var(--cizgi);transition:transform .8s cubic-bezier(.2,.8,.2,1),opacity .6s}
+.tsatir.ben{background:var(--mor-acik);border-color:var(--mor)}
+.tsatir .sira{width:30px;font-weight:800;text-align:center}
+.tsatir .kodad{flex:1;font-weight:700}
+.tsatir .tpuan{font-weight:800;min-width:44px;text-align:right;font-variant-numeric:tabular-nums}
+.artis{color:var(--yesil);font-weight:800;font-size:14px;animation:yukari 1s ease-out}
+@keyframes yukari{0%{opacity:0;transform:translateY(8px)}100%{opacity:1;transform:none}}
+.kendi-sira{margin-top:14px;padding:12px;border-radius:12px;background:var(--mor-acik);text-align:center}
+.sonuc-kutu{margin-top:12px;padding:16px;border-radius:14px;text-align:center;font-size:20px;font-weight:800}
+.sonuc-kutu.dogru{background:var(--yesil-acik);color:var(--yesil)}
+.sonuc-kutu.yanlis{background:var(--kirmizi-acik);color:var(--kirmizi)}
+.bekle-ikon{animation:nabizIkon 1.4s ease-in-out infinite}
+@keyframes nabizIkon{0%,100%{transform:scale(1)}50%{transform:scale(1.12)}}
+.podyum{display:flex;align-items:flex-end;justify-content:center;gap:8px;margin:12px 0}
+.podyum>div{flex:1;max-width:110px;border-radius:12px 12px 4px 4px;background:var(--bg);border:1px solid var(--cizgi);padding:8px 4px;display:flex;flex-direction:column;align-items:center}
+.podyum .p1{order:2;min-height:120px}.podyum .p2{order:1;min-height:96px}.podyum .p3{order:3;min-height:80px}
+.podyum span{font-size:26px}.podyum small{color:var(--soluk)}
+.podyum .ben{background:var(--mor-acik);border-color:var(--mor)}
