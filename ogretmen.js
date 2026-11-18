@@ -106,8 +106,8 @@ function ciz() {
   </div>
   <div class="kart">
     <h3>Katılımcılar (${bagli.length})</h3>
-    <p class="soluk">Bir kod ilk girildiği telefona bağlanır. Öğrenci telefon değiştirdiyse ya da yanlış kod girdiyse koda dokunup serbest bırak.</p>
-    <div class="oyuncular">${bagli.map(k => `<button class="cip" data-birak="${k}">${kacis(k)} · ${Object.keys(ilerleme[k] || {}).length} işaret</button>`).join("") || `<span class="soluk">Henüz kod giren yok.</span>`}</div>
+    <p class="soluk">Öğrenciler kod + 4 haneli PIN ile girer. PIN unutulursa: Firebase Console → Authentication → Users → <b>p7@ogrenci.isaretdili.test</b> gibi hesabı bul → Delete account. Öğrenci aynı kodla yeni PIN belirleyerek girer; puanları ve ilerlemesi korunur.</p>
+    <div class="oyuncular">${bagli.map(k => `<span title="Son giriş: ${katilimci[k].sonGiris ? new Date(katilimci[k].sonGiris).toLocaleString("tr-TR") : "-"}">${kacis(k)} · ${Object.keys(ilerleme[k] || {}).length} işaret</span>`).join("") || `<span class="soluk">Henüz giriş yapan yok.</span>`}</div>
   </div>
   <div class="kart">
     <h3>Analiz verisi (CSV)</h3>
@@ -142,10 +142,6 @@ function ciz() {
     const k = b.dataset.sifirla;
     if (!confirm(`${k} kodunun ${seciliHafta}. hafta quiz kaydı silinsin mi? Öğrenci quiz'e yeniden girebilecek.`)) return;
     update(ref(db), { [`study/attempt/${k}/${hk}`]: null, [`study/scores/${k}/${hk}`]: null, [`study/board/${hk}/${k}`]: null });
-  });
-  kok.querySelectorAll("[data-birak]").forEach(b => b.onclick = () => {
-    const k = b.dataset.birak;
-    if (confirm(`${k} kodu serbest bırakılsın mı? Öğrenci kodu başka bir telefonda yeniden girebilir; puanları ve ilerlemesi korunur.`)) remove(ref(db, `study/participants/${k}/uid`));
   });
   $("#denemeSil").onclick = () => {
     if (prompt(`${seciliHafta}. haftanın BÜTÜN quiz kayıtları (puanlar, cevaplar, tamamlama) silinecek. Onaylamak için SİL yaz:`) !== "SİL") return;

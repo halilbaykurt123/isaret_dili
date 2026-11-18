@@ -1,5 +1,5 @@
 import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js";
-import { getAuth, signInAnonymously, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-auth.js";
+import { getAuth, signInWithEmailAndPassword, createUserWithEmailAndPassword, signOut, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-auth.js";
 import { getDatabase, ref, set, get, remove, onValue, serverTimestamp } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-database.js";
 import { firebaseConfig, GIRIS_VIDEOSU, SORU_SURESI_SN } from "./firebase-config.js";
 
@@ -14,16 +14,19 @@ const yerel = {
   yaz(k, v) { try { localStorage.setItem(k, JSON.stringify(v)); } catch {} }
 };
 
-// ---------- Katılımcı kodu (P1, P2 … ; öğrenci kendisi girer, ad hiçbir yerde tutulmaz) ----------
-// Bir kodu ilk giren telefon o koda bağlanır; telefon değişirse araştırmacı panelden serbest bırakır.
+// ---------- Katılımcı girişi: kod (P1, P2 …) + 4 haneli PIN ----------
+// Her kod bir Firebase hesabıdır (ör. p7@ogrenci.isaretdili.test). Öğrenci PIN'i ilk girişte kendisi belirler;
+// sonra hangi telefon ya da tarayıcıdan girerse girsin aynı kod ve PIN ile girer. Ad hiçbir yerde tutulmaz.
+const OGRENCI_ALANI = "@ogrenci.isaretdili.test";
 const kodDuzenle = s => { const m = String(s || "").toUpperCase().replace(/[\s-]+/g, "").match(/^P0*([1-9][0-9]?)$/); return m ? "P" + m[1] : ""; };
-let kod = kodDuzenle(yerel.oku("kod", ""));
-let kodHazir = false, kodMesaji = "";
-let ogrenilen = yerel.oku("ogrenilen", {});
+const kodEposta = k => k.toLowerCase() + OGRENCI_ALANI;
+const epostaKod = e => { const m = String(e || "").toLowerCase().match(/^(p[1-9][0-9]?)@ogrenci\.isaretdili\.test$/); return m ? m[1].toUpperCase() : ""; };
+const pinSifre = (k, pin) => `TID-${pin}-${k}`;      // Firebase en az 6 karakterli şifre istiyor
+let kod = "", kodHazir = false, kodMesaji = "", girisBilindi = false;
+let ogrenilen = {};
 const ogrenildiMi = v => !!ogrenilen[v];
 function ogrenildiYap(v, deger) {
   if (deger) ogrenilen[v] = Date.now(); else delete ogrenilen[v];
-  yerel.yaz("ogrenilen", ogrenilen);
   if (db && kod && kodHazir) {
     const r = ref(db, `study/progress/${kod}/${v}`);
     (deger ? set(r, serverTimestamp()) : remove(r)).catch(e => console.warn("İlerleme kaydedilemedi", e));
@@ -38,29 +41,23 @@ const simdi = () => Date.now() + saatFarki;        // sunucu saati (herkes için
 try {
   const app = initializeApp(firebaseConfig);
   db = getDatabase(app); auth = getAuth(app);
+  onValue(ref(db, ".info/serverTimeOffset"), s => { saatFarki = Number(s.val()) || 0; });
   onAuthStateChanged(auth, u => {
-    if (!u) return;
+    girisBilindi = true;
+    const k = u ? epostaKod(u.email) : "";
+    if (!k) { uid = null; kod = ""; kodHazir = false; ogrenilen = {}; toplamPuan = null; if (!sinavCalisiyor) ciz(); return; }
     uid = u.uid; durumuDinle();
-    onValue(ref(db, ".info/serverTimeOffset"), s => { saatFarki = Number(s.val()) || 0; });
-    if (kod) kodBagla(kod).then(() => { if (!sinavCalisiyor) ciz(); }).catch(e => {
-      if (/permission/i.test(e.message)) { kodMesaji = `${kod} kodu başka bir telefona bağlı. Kodunu kontrol et; telefon değiştirdiysen araştırmacıya söyle.`; kodBirak(); }
-      else fbHata = e.message;
-      if (!sinavCalisiyor) ciz();
-    });
+    kodBagla(k).then(() => { if (!sinavCalisiyor) ciz(); }).catch(e => { fbHata = e.message; if (!sinavCalisiyor) ciz(); });
   });
-  signInAnonymously(auth).catch(e => { fbHata = e.message; ciz(); });
 } catch (e) { fbHata = e.message; }
 
 async function kodBagla(k) {
-  await set(ref(db, `study/participants/${k}/uid`), uid);     // kod başka telefona bağlıysa izin hatası verir
-  kod = k; kodHazir = true; yerel.yaz("kod", k);
-  const s = await get(ref(db, `study/progress/${k}`));
-  const uzak = s.val() || {};
-  for (const v of Object.keys(ogrenilen)) if (!uzak[v]) { uzak[v] = Date.now(); set(ref(db, `study/progress/${k}/${v}`), serverTimestamp()).catch(() => {}); }
-  ogrenilen = uzak; yerel.yaz("ogrenilen", ogrenilen);
+  kod = k;
+  await set(ref(db, `study/participants/${k}`), { uid, sonGiris: serverTimestamp() });
+  kodHazir = true;
+  ogrenilen = (await get(ref(db, `study/progress/${k}`))).val() || {};
   await toplamPuaniGetir();
 }
-function kodBirak() { kod = ""; kodHazir = false; ogrenilen = {}; toplamPuan = null; yerel.yaz("kod", ""); yerel.yaz("ogrenilen", {}); }
 
 let durumDinleniyor = false;
 function durumuDinle() {
@@ -96,6 +93,7 @@ function ust(geri) {
 }
 
 function ciz() {
+  if (!girisBilindi) { kok.innerHTML = ust(false) + `<div class="kart"><p style="text-align:center">Yükleniyor…</p></div>`; return; }
   if (!kod) return kodEkrani();
   const r = rota();
   if (r.ad === "hafta") return haftaSayfasi(r.n);
@@ -104,28 +102,57 @@ function ciz() {
   anaSayfa();
 }
 
-// ---------- KOD GİRİŞ EKRANI (ilk açılış) ----------
+// ---------- GİRİŞ EKRANI: kod + PIN ----------
+let onayBekleyen = null;     // ilk girişte PIN onayı beklenen kod
 function kodEkrani(mesaj) {
   mesaj = mesaj || kodMesaji; kodMesaji = "";
+  const onay = onayBekleyen;
   kok.innerHTML = ust(false) + `<section class="kart">
     <div class="etiket e-a"><i></i>Hoş geldin</div>
-    <h2>Katılımcı kodunu gir</h2>
-    <p class="soluk">Araştırmacının sana verdiği kodu yaz, örneğin <b>P7</b>. İlerlemen ve quiz puanların bu kodla kaydedilir; adın hiçbir yerde tutulmaz.</p>
-    <input type="text" id="kod" autocapitalize="characters" autocomplete="off" maxlength="5" placeholder="P1">
-    <button class="btn" id="kodgir">Devam et</button>
+    ${onay ? `<h2>${kacis(onay.kod)} için PIN'ini onayla</h2>
+      <p class="soluk">Bu kodla ilk kez giriyorsan belirlediğin PIN'i tekrar yaz. Bundan sonra her telefondan <b>${kacis(onay.kod)}</b> ve bu PIN ile gireceksin; PIN'ini unutma.</p>
+      <p class="soluk" style="font-size:14px">Daha önce giriş yaptıysan PIN'in yanlış olabilir: <a href="#" id="geri">geri dön</a>.</p>
+      <input type="password" id="pin" inputmode="numeric" autocomplete="off" maxlength="4" placeholder="PIN (tekrar)">
+      <button class="btn" id="kodgir">PIN'i onayla ve gir</button>`
+    : `<h2>Giriş yap</h2>
+      <p class="soluk">Araştırmacının verdiği kodu (örn. <b>P7</b>) ve 4 haneli PIN'ini yaz. İlk kez giriyorsan PIN'i şimdi sen belirle. İlerlemen ve quiz puanların bu kodla kaydedilir; adın hiçbir yerde tutulmaz.</p>
+      <input type="text" id="kod" autocapitalize="characters" autocomplete="off" maxlength="5" placeholder="Kod (P1)">
+      <input type="password" id="pin" inputmode="numeric" autocomplete="off" maxlength="4" placeholder="PIN (4 rakam)">
+      <button class="btn" id="kodgir">Giriş yap</button>`}
     ${mesaj ? `<div class="uyari">${kacis(mesaj)}</div>` : ""}
     ${fbHata ? `<div class="uyari">Bağlantı sorunu: ${kacis(fbHata)}</div>` : ""}
   </section>`;
+  const mesgul = () => { $("#kodgir").disabled = true; $("#kodgir").textContent = "Kontrol ediliyor…"; };
   const gir = async () => {
+    const pin = ($("#pin").value || "").trim();
+    if (!/^\d{4}$/.test(pin)) return kodEkrani("PIN 4 rakamdan oluşur.");
+    if (onay) {
+      if (pin !== onay.pin) { onayBekleyen = null; return kodEkrani("İki PIN aynı değil. Tekrar dene."); }
+      mesgul();
+      try { await createUserWithEmailAndPassword(auth, kodEposta(onay.kod), pinSifre(onay.kod, pin)); onayBekleyen = null; }
+      catch (e) {
+        onayBekleyen = null;
+        kodEkrani(e.code === "auth/email-already-in-use" ? `${onay.kod} kodu daha önce kullanılmış ve PIN yanlış. PIN'ini hatırlamıyorsan araştırmacıya söyle.`
+          : e.code === "auth/too-many-requests" ? "Çok fazla deneme yapıldı, biraz bekleyip tekrar dene." : "Giriş yapılamadı: " + (e.code || e.message));
+      }
+      return;
+    }
     const k = kodDuzenle($("#kod").value);
     if (!k) return kodEkrani("Kod P harfi ve bir sayıdan oluşur, örneğin P7.");
-    if (!uid) return kodEkrani("Sunucuya bağlanılıyor, birkaç saniye sonra tekrar dene.");
-    $("#kodgir").disabled = true; $("#kodgir").textContent = "Kontrol ediliyor…";
-    try { await kodBagla(k); ciz(); }
-    catch (e) { kodEkrani(/permission/i.test(e.message) ? `${k} kodu başka bir telefona bağlı. Kodunu kontrol et; telefon değiştirdiysen araştırmacıya söyle.` : "Bağlantı sorunu: " + e.message); }
+    mesgul();
+    try { await signInWithEmailAndPassword(auth, kodEposta(k), pinSifre(k, pin)); }
+    catch (e) {
+      if (e.code === "auth/wrong-password") return kodEkrani(`${k} için PIN yanlış. PIN'ini hatırlamıyorsan araştırmacıya söyle.`);
+      if (e.code === "auth/user-not-found" || e.code === "auth/invalid-credential" || e.code === "auth/invalid-login-credentials") {
+        onayBekleyen = { kod: k, pin }; return kodEkrani();
+      }
+      kodEkrani(e.code === "auth/too-many-requests" ? "Çok fazla deneme yapıldı, biraz bekleyip tekrar dene." : "Giriş yapılamadı: " + (e.code || e.message));
+    }
   };
   $("#kodgir").onclick = gir;
-  $("#kod").onkeydown = e => { if (e.key === "Enter") gir(); };
+  $("#pin").onkeydown = e => { if (e.key === "Enter") gir(); };
+  const g = $("#geri"); if (g) g.onclick = e => { e.preventDefault(); onayBekleyen = null; kodEkrani(); };
+  (onay ? $("#pin") : $("#kod")).focus?.();
 }
 
 // ---------- ANA SAYFA (ARCS) ----------
@@ -169,7 +196,6 @@ function anaSayfa() {
   </section>
 
   <section class="kart">
-    <div class="etiket e-s"><i></i>Doyum</div>
     <h3>Başarıların</h3>
     <div class="puan">
       <div><b>${ogrenilenSayi}</b><small>öğrenilen işaret</small></div>
@@ -181,7 +207,9 @@ function anaSayfa() {
     </button>
     <p class="soluk" style="margin:8px 0 0;font-size:14px;text-align:center">Quiz'e her haftanın kendi sayfasından katılırsın.</p>
     ${fbHata ? `<div class="uyari">Bağlantı sorunu: ${kacis(fbHata)}</div>` : ""}
-  </section>`;
+  </section>
+  <p class="soluk" style="text-align:center;font-size:13px"><b>${kacis(kod)}</b> olarak giriş yaptın · <a href="#" id="cikis">Çıkış yap</a></p>`;
+  $("#cikis").onclick = e => { e.preventDefault(); if (confirm("Çıkış yapılsın mı? Tekrar girmek için kodun ve PIN'in gerekecek.")) signOut(auth); };
 }
 
 // ---------- HAFTA SAYFASI ----------
@@ -251,7 +279,12 @@ function oynatici(liste, i, kapaninca) {
     vid.playbackRate = hiz;
     vid.onloadedmetadata = () => { vid.playbackRate = hiz; };
     perde.querySelectorAll(".hiz button").forEach(b => b.onclick = () => { hiz = Number(b.dataset.h); yerel.yaz("hiz", hiz); goster(); });
-    perde.querySelector("#ogr").onclick = () => { ogrenildiYap(v, !ogrenildiMi(v)); goster(); };
+    perde.querySelector("#ogr").onclick = () => {
+      const yeni = !ogrenildiMi(v);
+      ogrenildiYap(v, yeni);
+      if (yeni && i < liste.length - 1) i++;          // öğrenildi olarak işaretleyince sıradaki videoya geç
+      goster();
+    };
     perde.querySelector("#onc").onclick = () => { i--; goster(); };
     perde.querySelector("#snr").onclick = () => { i++; goster(); };
     perde.querySelector("#kpt").onclick = kapat;
@@ -505,7 +538,7 @@ function etkinlikSayfasi(n) {
 // 15 sn cevap → 2 sn doğru cevap → 5 sn puan tablosu → sıradaki soru.
 const SORU_MS = SORU_SURESI_SN * 1000, CEVAP_MS = 2000, TABLO_MS = 5000;
 const DONGU_MS = SORU_MS + CEVAP_MS + TABLO_MS, GERI_SAYIM_MS = 3000, TABLO_SATIR = 5, SATIR_H = 54;
-let sinavCalisiyor = false, quizOturum = null;
+let sinavCalisiyor = false, quizOturum = null, lobiKapat = null;
 
 const bekleMs = ms => new Promise(r => setTimeout(r, ms));
 const karistir = a => { a = a.slice(); for (let i = a.length - 1; i > 0; i--) { const j = Math.floor(Math.random() * (i + 1)); [a[i], a[j]] = [a[j], a[i]]; } return a; };
@@ -513,8 +546,10 @@ const karistir = a => { a = a.slice(); for (let i = a.length - 1; i > 0; i--) { 
 const hizPuani = s => s <= 1 ? 50 : s <= 2 ? 40 : s <= 5 ? 25 : s <= 7 ? 15 : s <= 14 ? 5 : 1;
 const hataKart = m => { kok.innerHTML = ust(true) + `<div class="kart"><div class="uyari">${kacis(m)}</div></div>`; };
 
+function lobiyiBirak() { if (lobiKapat) { lobiKapat(); lobiKapat = null; } }
 function sinaviBirak() {
   sinavCalisiyor = false;
+  lobiyiBirak();
   if (quizOturum) { clearInterval(quizOturum.zamanlayici); quizOturum.tabloKapat?.(); quizOturum = null; }
 }
 
@@ -544,8 +579,19 @@ async function girisYap() {
     <div class="etiket e-s"><i></i>${durum.week}. Hafta Quiz</div>
     <h2>Bekleme odası</h2>
     <div class="buyuk-ikon bekle-ikon">⏳</div>
-    <p>Kodun: <b>${kacis(kod)}</b></p>
-    <p class="soluk">Quiz herkes için aynı anda başlayacak; ekran kendiliğinden açılır. Bu sayfadan ayrılma.</p></div>`;
+    <p class="soluk">Quiz herkes için aynı anda başlayacak; ekran kendiliğinden açılır. Bu sayfadan ayrılma.</p>
+    <div class="lobi-sayi"><b id="lobiSayi">1</b> kişi hazır</div>
+    <div class="lobi" id="lobi"></div></div>`;
+  // Kahoot gibi: bekleme odasına giren herkesin kodu canlı olarak görünür
+  const gorulen = new Set();
+  lobiyiBirak();
+  lobiKapat = onValue(ref(db, "lobby/players"), s => {
+    const kutu = $("#lobi"); if (!kutu) return;
+    const kodlar = Object.keys(s.val() || {}).sort((x, y) => (parseInt(x.slice(1)) || 0) - (parseInt(y.slice(1)) || 0));
+    $("#lobiSayi").textContent = kodlar.length;
+    kutu.innerHTML = kodlar.map(k => `<span class="${k === kod ? "ben " : ""}${gorulen.has(k) ? "" : "yeni"}">${kacis(k)}</span>`).join("");
+    kodlar.forEach(k => gorulen.add(k));
+  }, () => {});
 }
 
 function tamamlandiEkrani(d) {
@@ -562,6 +608,7 @@ function sinavDurumDegisti() {
 
 async function quiziBaslat() {
   if (quizOturum) return;
+  lobiyiBirak();
   const hafta = Number(durum.week), hk = "week" + hafta, baslangic = Number(durum.startedAt);
   const o = quizOturum = { hafta, hk, baslangic, sorular: [], secenekler: [], cevaplar: {}, puan: 0, dogru: 0, tablo: {}, oncekiSira: {}, gorulen: new Set(), sonEkran: "", zamanlayici: null };
   sinavCalisiyor = true;
@@ -735,7 +782,6 @@ async function quiziBitir(o) {
   const u = UNITES.find(x => x.hafta === o.hafta), sonraki = UNITES.find(x => x.hafta === o.hafta + 1);
   const ogr = u ? haftaIlerleme(u).ok : 0, ilk3 = liste.slice(0, 3);
   kok.innerHTML = ust(true) + `<div class="kart" style="text-align:center">
-    <div class="etiket e-s"><i></i>Doyum</div>
     <div class="buyuk-ikon">${o.dogru / n >= 0.5 ? "🎉" : "💪"}</div>
     <h2>${o.dogru / n >= 0.5 ? "Tebrikler!" : "İyi denemeydi!"}</h2>
     <div class="podyum">${ilk3.map((x, s) => `<div class="p${s + 1} ${x.k === kod ? "ben" : ""}"><span>${["🥇", "🥈", "🥉"][s]}</span><b>${kacis(x.k)}</b><small>${x.p} puan</small></div>`).join("")}</div>

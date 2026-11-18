@@ -112,3 +112,10 @@ th{color:var(--soluk);font-size:12px;text-transform:uppercase}
 .podyum .p1{order:2;min-height:120px}.podyum .p2{order:1;min-height:96px}.podyum .p3{order:3;min-height:80px}
 .podyum span{font-size:26px}.podyum small{color:var(--soluk)}
 .podyum .ben{background:var(--mor-acik);border-color:var(--mor)}
+.lobi-sayi{margin:12px 0 8px;font-size:15px}
+.lobi-sayi b{font-size:22px;color:var(--mor)}
+.lobi{display:flex;flex-wrap:wrap;gap:8px;justify-content:center}
+.lobi span{background:var(--mor-acik);color:var(--mor);border-radius:99px;padding:8px 14px;font-weight:800;font-size:15px}
+.lobi span.ben{background:var(--mor);color:#fff}
+.lobi span.yeni{animation:lobiGir .45s cubic-bezier(.2,1.4,.4,1)}
+@keyframes lobiGir{0%{opacity:0;transform:scale(.3)}100%{opacity:1;transform:scale(1)}}
