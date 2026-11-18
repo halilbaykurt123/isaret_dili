@@ -255,6 +255,8 @@ function haftaSayfasi(n) {
   kok.querySelectorAll(".isaret").forEach(b => b.onclick = () => oynatici(liste, liste.findIndex(k => k[1] === b.dataset.v), () => haftaSayfasi(n)));
 }
 
+// Bakanlık sözlüğünden alınan videoların ("tid_" ile başlayan) altında gösterilen kaynak
+const TID_KAYNAK = "Video: Güncel Türk İşaret Dili Sözlüğü (Makaroğlu ve Dikyuva, 2017), Aile ve Sosyal Hizmetler Bakanlığı";
 function oynatici(liste, i, kapaninca) {
   let hiz = yerel.oku("hiz", 1);
   const perde = document.createElement("div");
@@ -267,6 +269,7 @@ function oynatici(liste, i, kapaninca) {
     perde.innerHTML = `<div class="oynatici">
       <video src="videos/${v}.mp4" autoplay muted loop playsinline></video>
       <h2>${kacis(ad)}</h2>
+      ${v.startsWith("tid_") ? `<p class="kaynak" style="text-align:center;margin:0 0 6px">${TID_KAYNAK}</p>` : ""}
       <div class="hiz">${[1, 0.75, 0.5].map(h => `<button data-h="${h}" class="${h === hiz ? "secili" : ""}">${h === 1 ? "Normal" : h + "x"}</button>`).join("")}</div>
       <button class="btn ${ogrenildiMi(v) ? "ikincil" : ""}" id="ogr">${ogrenildiMi(v) ? "✓ Öğrendim" : "Öğrendim"}</button>
       <div class="satir">
@@ -426,6 +429,7 @@ function etkinlikSayfasi(n) {
     <p class="soluk" id="model" style="font-size:13px;margin-top:-4px"></p>
     <div class="soru" id="sonuc">Kelime: —</div>
     <video id="vid" muted loop playsinline style="display:none;width:100%;border-radius:12px;background:#000;max-height:45vh;margin-top:12px"></video>
+    <p class="kaynak" id="etkKaynak" style="text-align:center"></p>
     <div class="satir" style="margin-top:4px">
       <input type="text" id="yaz" placeholder="ya da kelimeyi yaz" autocomplete="off" style="flex:1">
       <button class="btn ikincil" id="goster" style="width:auto;padding:0 18px">Göster</button>
@@ -453,6 +457,7 @@ function etkinlikSayfasi(n) {
     $("#sonuc").textContent = "Kelime: " + (v ? GORUNEN[v] || v : "—");
     if (!v) { vid.style.display = "none"; vid.removeAttribute("src"); durumYaz("Listede böyle bir kelime yok. Yalnızca kelimeyi tek başına söyle."); return; }
     vid.src = `videos/${v}.mp4`; vid.style.display = "block"; vid.playbackRate = yerel.oku("hiz", 1);
+    const kyn = $("#etkKaynak"); if (kyn) kyn.textContent = v.startsWith("tid_") ? TID_KAYNAK : "";
     vid.play().catch(() => {});
     durumYaz("Şimdi sen de işareti kendi ellerinle yap.");
   };

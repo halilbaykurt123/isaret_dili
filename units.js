@@ -6,20 +6,29 @@ window.UNITES = [
     hafta: 1,
     baslik: "Derse Giriş ve Türk İşaret Dili Tanıtımı",
     hedefler: [
-      "Selamlaşma işaretlerini yapabilir",
-      "Kendini tanıtırken kullanılan işaretleri yapabilir",
-      "Nezaket ifadelerini işaretle anlatabilir"
+      "Selamlaşma ve hal hatır sorma işaretlerini yapabilir",
+      "Kendini tanıtırken kullanılan işaretleri yapabilir (ad, yaş, memleket)",
+      "Nezaket ifadelerini işaretle anlatabilir",
+      "Temel cevap ve soru işaretleriyle kısa bir sohbeti sürdürebilir"
     ],
     gruplar: [
       { ad: "Selamlaşma", kelimeler: [
-        ["Merhaba", "hi"], ["Hoş geldin", "hosgeldn"], ["Günaydın", "gnaydn"],
-        ["İyi günler", "iyigun"], ["İyi akşamlar", "aksam"], ["İyi geceler", "gece"], ["Görüşürüz", "byebye"]
+        ["Merhaba", "hi"], ["Hoş geldin", "hosgeldn"], ["Günaydın", "gnaydn"], ["İyi günler", "iyigun"],
+        ["İyi akşamlar", "aksam"], ["İyi geceler", "gece"], ["Görüşürüz", "byebye"]
+      ]},
+      { ad: "Hal Hatır", kelimeler: [
+        ["Nasılsın? / İyi misin?", "iyimisin"], ["Ben iyiyim", "imfine"], ["Kötüyüm", "kotu"]
       ]},
       { ad: "Tanışma", kelimeler: [
-        ["Adın nedir?", "adnne"], ["Tanıştığımıza memnun oldum", "memnunolmak"]
+        ["Adın nedir?", "adnne"], ["Benim", "benim"], ["Kaç yaşındasın?", "yaskac"], ["Nerelisin?", "nerelisin"],
+        ["Arkadaş", "arkadas"], ["Tanıştığımıza memnun oldum", "memnunolmak"]
       ]},
       { ad: "Nezaket", kelimeler: [
-        ["Teşekkürler", "tesekkurler"], ["Lütfen", "lutfen"], ["Özür dilerim", "ozur"]
+        ["Teşekkürler", "tesekkurler"], ["Rica ederim", "tid_rica"], ["Lütfen", "lutfen"], ["Özür dilerim", "ozur"], ["Eline sağlık", "elinesag"]
+      ]},
+      { ad: "Temel Cevaplar ve Sorular", kelimeler: [
+        ["Evet", "evett"], ["Hayır", "no"], ["Tamam", "tid_tamam"], ["Olur", "olur"], ["Olmaz", "olmaz"],
+        ["Bu nedir?", "bunedir"], ["Müsait misin?", "musaitmisin"]
       ]}
     ]
   },
@@ -42,7 +51,7 @@ window.UNITES = [
         ["Afiyet olsun", "afiyet"], ["Geçmiş olsun", "gecmis"], ["Kendine iyi bak", "kendinebak"], ["Seni seviyorum", "sevmek"]
       ]},
       { ad: "İletişim", kelimeler: [
-        ["Nasılsın? / İyi misin?", "iyimisin"], ["Ben iyiyim", "imfine"], ["Kötüyüm", "kotu"], ["Hastayım", "imsick"],
+        ["Hastayım", "imsick"],
         ["Kendimi iyi hissetmiyorum", "iyihissetmem"], ["Yardım lazım mı?", "help"],
         ["Nasıl yardımcı olabilirim?", "howcanihelp"], ["Doktor lazım mı?", "doc"],
         ["Facebook'un var mı?", "face"], ["Instagram'ın var mı?", "insta"]
@@ -59,7 +68,7 @@ window.UNITES = [
     ],
     gruplar: [
       { ad: "Soru Cümleleri", kelimeler: [
-        ["Kaç yaşındasın?", "yaskac"], ["Nerelisin?", "nerelisin"], ["Senin evin nerede?", "nereded"],
+        ["Senin evin nerede?", "nereded"],
         ["Hangi okula gidiyorsun?", "hangiokul"], ["Kaçıncı sınıfsın?", "kacincisinif"],
         ["Hangi araçla geldin?", "hangiarac"], ["Kimle gidiyorsun?", "kimlegit"], ["Mesleğin ne?", "mmeslek"],
         ["Çalışıyor musun?", "calsmak"], ["Aç mısın?", "hungry"], ["Ne içmek istersin?", "neicmekisten"],
@@ -99,16 +108,16 @@ window.UNITES = [
     hafta: 5,
     baslik: "Olumlu-Olumsuz Cümle, Mevsimler, Günler ve Aylar",
     hedefler: [
-      "Olumlu ve olumsuz cevap işaretlerini yapabilir",
+      "Doğru ve yanlış bildiren işaretleri yapabilir",
       "Mevsim işaretlerini yapabilir",
       "Gün işaretlerini yapabilir"
     ],
     gruplar: [
       { ad: "Olumlu - Olumsuz", kelimeler: [
-        ["Evet", "evett"], ["Hayır", "no"], ["Doğru", "dogru"], ["Yanlış", "yanlis"]
+        ["Doğru", "dogru"], ["Yanlış", "yanlis"]
       ]},
       { ad: "Mevsimler", kelimeler: [
-        ["Yaz", "yaz"], ["Kış", "kis"], ["Sonbahar", "sonbahar"]
+        ["İlkbahar", "ilkbahar"], ["Yaz", "yaz"], ["Sonbahar", "sonbahar"], ["Kış", "kis"]
       ]},
       { ad: "Günler", kelimeler: [
         ["Perşembe", "pers"], ["Cuma", "cuma"]
