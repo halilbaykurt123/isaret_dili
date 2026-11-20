@@ -9,7 +9,7 @@ window.UNITES = [
       "Selamlaşma ve hal hatır sorma işaretlerini yapabilir",
       "Kendini tanıtırken kullanılan işaretleri yapabilir (ad, yaş, memleket)",
       "Nezaket ifadelerini işaretle anlatabilir",
-      "Temel cevap ve soru işaretleriyle kısa bir sohbeti sürdürebilir"
+      "Temel cevap işaretleriyle kısa bir sohbeti sürdürebilir"
     ],
     gruplar: [
       { ad: "Selamlaşma", kelimeler: [
@@ -21,14 +21,14 @@ window.UNITES = [
       ]},
       { ad: "Tanışma", kelimeler: [
         ["Adın nedir?", "adnne"], ["Benim", "benim"], ["Kaç yaşındasın?", "yaskac"], ["Nerelisin?", "nerelisin"],
-        ["Arkadaş", "arkadas"], ["Tanıştığımıza memnun oldum", "memnunolmak"]
+        ["Arkadaş", "arkadas"], ["Erkek", "bunedir"], ["Tanıştığımıza memnun oldum", "memnunolmak"]
       ]},
       { ad: "Nezaket", kelimeler: [
         ["Teşekkürler", "tesekkurler"], ["Rica ederim", "tid_rica"], ["Lütfen", "lutfen"], ["Özür dilerim", "ozur"], ["Eline sağlık", "elinesag"]
       ]},
-      { ad: "Temel Cevaplar ve Sorular", kelimeler: [
+      { ad: "Temel Cevaplar", kelimeler: [
         ["Evet", "evett"], ["Hayır", "no"], ["Tamam", "tid_tamam"], ["Olur", "olur"], ["Olmaz", "olmaz"],
-        ["Bu nedir?", "bunedir"], ["Müsait misin?", "musaitmisin"]
+        ["Müsait misin?", "musaitmisin"]
       ]}
     ]
   },

@@ -421,25 +421,26 @@ function etkinlikSayfasi(n) {
   if (!u) { location.hash = "#/"; return; }
   let motor = motorSec();
   kok.innerHTML = `<div class="ust"><button class="geri" onclick="location.hash='#/hafta/${n}'">‹ ${n}. Hafta</button></div>
-  <section class="kart" style="text-align:center">
+  <section class="kart">
     <div class="etiket e-a"><i></i>Etkinlik · ${n}. Hafta</div>
     <h2>Söyle, işaretini gör</h2>
+    <p class="soluk"><b>1.</b> Aşağıdan bir kelime seç. <b>2.</b> Mikrofona dokunup kelimeyi söyle. <b>3.</b> Videoyu istediğin kadar izle, gerekirse yavaşlat ve işareti kendi ellerinle yap.</p>
+    <div class="cipler">${u.gruplar.flatMap(g => g.kelimeler).map(([ad, v]) => `<button class="cip" data-v="${v}" data-ad="${kacis(ad)}">${kacis(ad)}</button>`).join("")}</div>
+  </section>
+  <section class="kart" style="text-align:center">
     <button class="mik" id="mik" aria-label="Konuşmak için dokun">🎤</button>
     <p class="soluk" id="durum">Engelleri kaldırmak için lütfen konuşun</p>
     <p class="soluk" id="model" style="font-size:13px;margin-top:-4px"></p>
     <div class="soru" id="sonuc">Kelime: —</div>
     <video id="vid" muted loop playsinline style="display:none;width:100%;border-radius:12px;background:#000;max-height:45vh;margin-top:12px"></video>
+    <div class="hiz" id="etkHiz" style="display:none">${[1, 0.75, 0.5].map(h => `<button data-h="${h}">${h === 1 ? "Normal" : h + "x"}</button>`).join("")}</div>
     <p class="kaynak" id="etkKaynak" style="text-align:center"></p>
     <div class="satir" style="margin-top:4px">
       <input type="text" id="yaz" placeholder="ya da kelimeyi yaz" autocomplete="off" style="flex:1">
       <button class="btn ikincil" id="goster" style="width:auto;padding:0 18px">Göster</button>
     </div>
   </section>
-  <section class="kart">
-    <h3>Bu haftanın kelimeleri</h3>
-    <p class="soluk">Bunlardan birini söylemeyi dene. Önceki haftaların kelimeleri de çalışır.</p>
-    <div class="cipler">${u.gruplar.flatMap(g => g.kelimeler).map(([ad, v]) => `<button class="cip" data-v="${v}" data-ad="${kacis(ad)}">${kacis(ad)}</button>`).join("")}</div>
-  </section>`;
+`;
 
   const durumYaz = m => { const d = $("#durum"); if (d) d.textContent = m; };
   const modelYaz = () => {
@@ -455,8 +456,9 @@ function etkinlikSayfasi(n) {
   const vid = $("#vid");
   const goster = v => {
     $("#sonuc").textContent = "Kelime: " + (v ? GORUNEN[v] || v : "—");
-    if (!v) { vid.style.display = "none"; vid.removeAttribute("src"); durumYaz("Listede böyle bir kelime yok. Yalnızca kelimeyi tek başına söyle."); return; }
-    vid.src = `videos/${v}.mp4`; vid.style.display = "block"; vid.playbackRate = yerel.oku("hiz", 1);
+    if (!v) { vid.style.display = "none"; $("#etkHiz").style.display = "none"; vid.removeAttribute("src"); durumYaz("Listede böyle bir kelime yok. Yalnızca kelimeyi tek başına söyle."); return; }
+    vid.src = `videos/${v}.mp4`; vid.style.display = "block"; $("#etkHiz").style.display = "flex";
+    hizUygula(yerel.oku("hiz", 1));
     const kyn = $("#etkKaynak"); if (kyn) kyn.textContent = v.startsWith("tid_") ? TID_KAYNAK : "";
     vid.play().catch(() => {});
     durumYaz("Şimdi sen de işareti kendi ellerinle yap.");
@@ -467,7 +469,20 @@ function etkinlikSayfasi(n) {
   };
   $("#goster").onclick = () => { const t = $("#yaz").value; if (t.trim()) metindenGoster([t]); };
   $("#yaz").onkeydown = e => { if (e.key === "Enter") $("#goster").click(); };
-  kok.querySelectorAll(".cip").forEach(b => b.onclick = () => goster(b.dataset.v));
+  // Video döngüde oynar; hız öğrencinin seçimine göre (hafta sayfasındaki seçimle ortak)
+  const hizUygula = h => {
+    yerel.yaz("hiz", h); vid.playbackRate = h;
+    kok.querySelectorAll("#etkHiz button").forEach(b => b.classList.toggle("secili", Number(b.dataset.h) === h));
+  };
+  vid.onloadedmetadata = () => { vid.playbackRate = yerel.oku("hiz", 1); };
+  kok.querySelectorAll("#etkHiz button").forEach(b => b.onclick = () => hizUygula(Number(b.dataset.h)));
+  // Kelime seçmek videoyu açmaz: öğrenci seçtiği kelimeyi söyler
+  kok.querySelectorAll(".cip").forEach(b => b.onclick = () => {
+    kok.querySelectorAll(".cip").forEach(x => x.classList.remove("secili"));
+    b.classList.add("secili");
+    durumYaz(`Şimdi mikrofona dokun ve “${b.dataset.ad}” de.`);
+    $("#mik").scrollIntoView({ behavior: "smooth", block: "center" });
+  });
 
   const mik = $("#mik");
   const tarayiciIleDinle = () => {
@@ -669,7 +684,7 @@ function tik(o) {
   else quiziBitir(o);
 }
 
-const ustBilgi = (o, i) => `<div class="bilgi"><span>Soru ${i + 1}/${o.sorular.length}</span><span>${kacis(kod)} · <b>${o.puan}</b> puan</span></div>`;
+const ustBilgi = (o, i) => `<div class="bilgi"><span>Soru ${i + 1}/${o.sorular.length}</span><span>${kacis(kod)}</span></div>`;
 
 function sayacEkrani(o, sn) {
   kok.innerHTML = `<div class="kart"><p style="text-align:center" class="soluk">${o.hafta}. Hafta Quiz · ${o.sorular.length} soru</p>

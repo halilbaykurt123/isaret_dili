@@ -937,7 +937,7 @@ window.SESLI_EK = {
 "bölümün ne": "bolumne",
 "boş": "bos",
 "bugün": "bugun",
-"bu nedir": "bunedir",
+"erkek": "bunedir",
 "bay": "bye",
 "çabuk": "cabuk",
 "çarşamba": "carsamba",

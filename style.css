@@ -119,3 +119,4 @@ th{color:var(--soluk);font-size:12px;text-transform:uppercase}
 .lobi span.ben{background:var(--mor);color:#fff}
 .lobi span.yeni{animation:lobiGir .45s cubic-bezier(.2,1.4,.4,1)}
 @keyframes lobiGir{0%{opacity:0;transform:scale(.3)}100%{opacity:1;transform:scale(1)}}
+.cip.secili{background:var(--mor);color:#fff;border-color:var(--mor)}
